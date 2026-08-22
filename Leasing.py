@@ -1,7 +1,7 @@
 import os
 import io
 import datetime
-import urllib.request
+import requests
 from dataclasses import dataclass
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import (
@@ -23,22 +23,32 @@ from reportlab.pdfbase.ttfonts import TTFont
 
 TELEGRAM_TOKEN = "8902761856:AAEmSuEs96Bxm2XA-H3vBiyrPU0wNqhPB9g"
 
-# Εγγραφή Unicode γραμματοσειράς για πλήρη υποστήριξη Ελληνικών
-FONT_URL = "https://raw.githubusercontent.com/google/fonts/main/ofl/notosans/NotoSans-Regular.ttf"
-FONT_BOLD_URL = "https://raw.githubusercontent.com/google/fonts/main/ofl/notosans/NotoSans-Bold.ttf"
-FONT_PATH = "/tmp/NotoSans-Regular.ttf"
-FONT_BOLD_PATH = "/tmp/NotoSans-Bold.ttf"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+FONT_REGULAR_PATH = os.path.join(BASE_DIR, "DejaVuSans.ttf")
+FONT_BOLD_PATH = os.path.join(BASE_DIR, "DejaVuSans-Bold.ttf")
 
 def setup_greek_fonts():
-    try:
-        if not os.path.exists(FONT_PATH):
-            urllib.request.urlretrieve(FONT_URL, FONT_PATH)
-        if not os.path.exists(FONT_BOLD_PATH):
-            urllib.request.urlretrieve(FONT_BOLD_URL, FONT_BOLD_PATH)
-        pdfmetrics.registerFont(TTFont('NotoSans', FONT_PATH))
-        pdfmetrics.registerFont(TTFont('NotoSans-Bold', FONT_BOLD_PATH))
-    except Exception as e:
-        print(f"Font download error: {e}")
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    if not os.path.exists(FONT_REGULAR_PATH):
+        try:
+            r = requests.get("https://github.com/dejavu-fonts/dejavu-fonts/raw/master/ttf/DejaVuSans.ttf", headers=headers, timeout=15)
+            with open(FONT_REGULAR_PATH, 'wb') as f:
+                f.write(r.content)
+        except Exception as e:
+            print(f"Error downloading Regular font: {e}")
+
+    if not os.path.exists(FONT_BOLD_PATH):
+        try:
+            r = requests.get("https://github.com/dejavu-fonts/dejavu-fonts/raw/master/ttf/DejaVuSans-Bold.ttf", headers=headers, timeout=15)
+            with open(FONT_BOLD_PATH, 'wb') as f:
+                f.write(r.content)
+        except Exception as e:
+            print(f"Error downloading Bold font: {e}")
+
+    if os.path.exists(FONT_REGULAR_PATH):
+        pdfmetrics.registerFont(TTFont('GreekFont', FONT_REGULAR_PATH))
+    if os.path.exists(FONT_BOLD_PATH):
+        pdfmetrics.registerFont(TTFont('GreekFont-Bold', FONT_BOLD_PATH))
 
 setup_greek_fonts()
 
@@ -132,7 +142,7 @@ def calculate_leasing(
     else:
         monthly_rate_excl_vat = total_cost_excl_vat / effective_months
 
-    # Προσθήκη Add-ons
+    # Add-ons
     addons_monthly_total = 0.0
     if "Μηδενική Απαλλαγή (+25€)" in selected_addons:
         addons_monthly_total += 25.0
@@ -175,20 +185,30 @@ def generate_pdf_quote(quote: LeaseQuote, plan_type: str, months: int) -> io.Byt
     styles = getSampleStyleSheet()
     story = []
 
-    font_name = 'NotoSans' if os.path.exists(FONT_PATH) else 'Helvetica'
-    font_bold = 'NotoSans-Bold' if os.path.exists(FONT_BOLD_PATH) else 'Helvetica-Bold'
+    f_reg = 'GreekFont' if os.path.exists(FONT_REGULAR_PATH) else 'Helvetica'
+    f_bold = 'GreekFont-Bold' if os.path.exists(FONT_BOLD_PATH) else 'Helvetica-Bold'
 
-    title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontName=font_bold, fontSize=16, textColor=colors.HexColor("#0D233A"), spaceAfter=5)
-    normal_style = ParagraphStyle('NormalStyle', parent=styles['Normal'], fontName=font_name, fontSize=10, textColor=colors.HexColor("#2C3E50"))
-    bold_style = ParagraphStyle('BoldStyle', parent=styles['Normal'], fontName=font_bold, fontSize=10, textColor=colors.HexColor("#0D233A"))
+    title_style = ParagraphStyle('TitleStyle', fontName=f_bold, fontSize=16, textColor=colors.HexColor("#0D233A"), spaceAfter=5)
+    normal_style = ParagraphStyle('NormalStyle', fontName=f_reg, fontSize=10, textColor=colors.HexColor("#2C3E50"))
+    bold_style = ParagraphStyle('BoldStyle', fontName=f_bold, fontSize=10, textColor=colors.HexColor("#0D233A"))
 
-    # Προσθήκη Logo
-    logo_path = "logo.png"
-    if os.path.exists(logo_path):
-        logo_img = Image(logo_path, width=160, height=45)
-        logo_img.hAlign = 'LEFT'
-        story.append(logo_img)
-        story.append(Spacer(1, 10))
+    # Εντοπισμός Logo
+    possible_logo_paths = [
+        os.path.join(BASE_DIR, "logo.png"),
+        os.path.join(BASE_DIR, "Flex-LeaseB.png"),
+        "logo.png",
+        "Flex-LeaseB.png"
+    ]
+    for lp in possible_logo_paths:
+        if os.path.exists(lp):
+            try:
+                logo_img = Image(lp, width=150, height=42)
+                logo_img.hAlign = 'LEFT'
+                story.append(logo_img)
+                story.append(Spacer(1, 10))
+                break
+            except Exception as e:
+                print(f"Error rendering logo: {e}")
 
     story.append(Paragraph("ΕΠΙΣΗΜΗ ΠΡΟΣΦΟΡΑ LEASING", title_style))
     story.append(Paragraph(f"Ημερομηνία: {datetime.datetime.now().strftime('%d/%m/%Y')}", normal_style))
