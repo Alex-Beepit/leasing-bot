@@ -21,13 +21,13 @@ TELEGRAM_TOKEN = "8902761856:AAEmSuEs96Bxm2XA-H3vBiyrPU0wNqhPB9g"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # Καταστάσεις διαλόγου
-PRESET_OR_CUSTOM, CUSTOM_PRICE, CUSTOM_YEAR, CUSTOM_ODOMETER, CUSTOM_FUEL, PLAN, DP, DURATION, START_MONTH, KM, ADDONS = range(11)
+CHOICE_STEP, CUSTOM_PRICE, CUSTOM_YEAR, CUSTOM_ODOMETER, CUSTOM_FUEL, PLAN_STEP, DP_STEP, DURATION_STEP, START_MONTH_STEP, KM_STEP, ADDONS_STEP = range(11)
 
 FLEET_PRESETS = {
-    "🚗 Fiat 500 Hybrid (2022)": {"name": "Fiat 500 Hybrid", "price": 14500.0, "year": 2022, "odometer": 35000, "fuel": "hybrid"},
-    "🚙 Peugeot 208 Diesel (2021)": {"name": "Peugeot 208 Diesel", "price": 16800.0, "year": 2021, "odometer": 52000, "fuel": "diesel"},
-    "⚡ Peugeot e-2008 EV (2022)": {"name": "Peugeot e-2008 Electric", "price": 24500.0, "year": 2022, "odometer": 28000, "fuel": "electric"},
-    "🚘 Nissan Qashqai (2021)": {"name": "Nissan Qashqai 1.3T", "price": 21500.0, "year": 2021, "odometer": 45000, "fuel": "gasoline"},
+    "Fiat 500 Hybrid (2022)": {"name": "Fiat 500 Hybrid", "price": 14500.0, "year": 2022, "odometer": 35000, "fuel": "hybrid"},
+    "Peugeot 208 Diesel (2021)": {"name": "Peugeot 208 Diesel", "price": 16800.0, "year": 2021, "odometer": 52000, "fuel": "diesel"},
+    "Peugeot e-2008 EV (2022)": {"name": "Peugeot e-2008 Electric", "price": 24500.0, "year": 2022, "odometer": 28000, "fuel": "electric"},
+    "Nissan Qashqai (2021)": {"name": "Nissan Qashqai 1.3T", "price": 21500.0, "year": 2021, "odometer": 45000, "fuel": "gasoline"},
 }
 
 @dataclass
@@ -110,9 +110,9 @@ def calculate_leasing(
         monthly_rate_excl_vat = total_cost_excl_vat / effective_months
 
     addons_monthly_total = 0.0
-    if "Μηδενική Απαλλαγή (+25€)" in selected_addons or "Zero Deductible (+25 EUR)" in selected_addons:
+    if any("Απαλλαγή" in a for a in selected_addons):
         addons_monthly_total += 25.0
-    if "2ος Οδηγός & Αλλαγή Ελαστικών (+15€)" in selected_addons or "2nd Driver & Tire Replacement (+15 EUR)" in selected_addons:
+    if any("Οδηγός" in a for a in selected_addons):
         addons_monthly_total += 15.0
 
     addons_excl_vat = addons_monthly_total / (1 + vat_rate)
@@ -209,53 +209,61 @@ def generate_pdf_quote(quote: LeaseQuote, plan_type: str, months: int) -> io.Byt
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
-    reply_keyboard = [[k] for k in FLEET_PRESETS.keys()] + [["🔧 Χειροκίνητη Εισαγωγή Αυτοκινήτου"]]
+    reply_keyboard = [[k] for k in FLEET_PRESETS.keys()] + [["Αλλο Αυτοκινητο (Χειροκινητα)"]]
     await update.message.reply_text(
         "🚗 **Καλωσήρθατε στο beepit Leasing!**\n\n"
         "Επιλέξτε ένα όχημα από τον στόλο μας ή εισάγετε τα δικά σας στοιχεία:",
         reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True),
         parse_mode="Markdown"
     )
-    return PRESET_OR_CUSTOM
+    return CHOICE_STEP
 
 async def handle_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     choice = update.message.text.strip()
-    if choice in FLEET_PRESETS:
-        data = FLEET_PRESETS[choice]
+    
+    # Αναζήτηση στα presets
+    matched_key = None
+    for k in FLEET_PRESETS:
+        if k.lower() in choice.lower() or choice.lower() in k.lower():
+            matched_key = k
+            break
+
+    if matched_key:
+        data = FLEET_PRESETS[matched_key]
         context.user_data['car_name'] = data['name']
         context.user_data['price'] = data['price']
         context.user_data['year'] = data['year']
         context.user_data['odometer'] = data['odometer']
         context.user_data['fuel'] = data['fuel']
         
-        reply_keyboard = [["Fixed", "Flex"]]
+        reply_keyboard = [["Fixed (36-60 μηνες)", "Flex (Χωρις δεσμευση)"]]
         await update.message.reply_text(
             f"✅ Επιλέξατε: **{data['name']}**\n\nΕπιλέξτε **πρόγραμμα μίσθωσης**:",
             reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True),
             parse_mode="Markdown"
         )
-        return PLAN
+        return PLAN_STEP
     else:
         context.user_data['car_name'] = "Custom Vehicle"
-        await update.message.reply_text("1️⃣ Στείλε την **τρέχουσα αξία του αυτοκινήτου (€)**:", reply_markup=ReplyKeyboardRemove(), parse_mode="Markdown")
+        await update.message.reply_text("1️⃣ Στείλε την **τρέχουσα αξία του αυτοκινήτου (€)** (π.χ. 18000):", reply_markup=ReplyKeyboardRemove(), parse_mode="Markdown")
         return CUSTOM_PRICE
 
 async def get_custom_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         context.user_data['price'] = float(update.message.text.replace('€', '').replace('.', '').replace(',', '.').strip())
-        await update.message.reply_text("2️⃣ Δώσε το **έτος κατασκευής / 1ης κυκλοφορίας**:")
+        await update.message.reply_text("2️⃣ Δώσε το **έτος κατασκευής / 1ης κυκλοφορίας** (π.χ. 2021):")
         return CUSTOM_YEAR
     except ValueError:
-        await update.message.reply_text("⚠️ Παρακαλώ δώσε έγκυρη τιμή:")
+        await update.message.reply_text("⚠️ Παρακαλώ δώσε έγκυρη τιμή (π.χ. 18000):")
         return CUSTOM_PRICE
 
 async def get_custom_year(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         context.user_data['year'] = int(update.message.text.strip())
-        await update.message.reply_text("3️⃣ Δώσε τα **τρέχοντα χιλιόμετρα**:")
+        await update.message.reply_text("3️⃣ Δώσε τα **τρέχοντα χιλιόμετρα** (π.χ. 45000):")
         return CUSTOM_ODOMETER
     except ValueError:
-        await update.message.reply_text("⚠️ Παρακαλώ δώσε έγκυρο έτος:")
+        await update.message.reply_text("⚠️ Παρακαλώ δώσε έγκυρο έτος (π.χ. 2021):")
         return CUSTOM_YEAR
 
 async def get_custom_odometer(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -269,26 +277,25 @@ async def get_custom_odometer(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
         return CUSTOM_FUEL
     except ValueError:
-        await update.message.reply_text("⚠️ Παρακαλώ δώσε έγκυρα χιλιόμετρα:")
+        await update.message.reply_text("⚠️ Παρακαλώ δώσε έγκυρα χιλιόμετρα (π.χ. 45000):")
         return CUSTOM_ODOMETER
 
 async def get_custom_fuel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     fuel_map = {"Βενζίνη": "gasoline", "Πετρέλαιο": "diesel", "Υβριδικό": "hybrid", "Ηλεκτρικό": "electric"}
     context.user_data['fuel'] = fuel_map.get(update.message.text.strip(), "gasoline")
     
-    reply_keyboard = [["Fixed", "Flex"]]
+    reply_keyboard = [["Fixed (36-60 μηνες)", "Flex (Χωρις δεσμευση)"]]
     await update.message.reply_text(
         "5️⃣ Επίλεξε **πρόγραμμα μίσθωσης**:",
         reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True),
         parse_mode="Markdown"
     )
-    return PLAN
+    return PLAN_STEP
 
 async def get_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    plan = update.message.text.strip().lower()
-    context.user_data['plan'] = plan
+    plan_text = update.message.text.strip().lower()
     
-    if "fixed" in plan:
+    if "fixed" in plan_text:
         context.user_data['plan'] = "fixed"
         reply_keyboard = [["0%", "10%", "20%"]]
         await update.message.reply_text(
@@ -296,7 +303,7 @@ async def get_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True),
             parse_mode="Markdown"
         )
-        return DP
+        return DP_STEP
     else:
         context.user_data['plan'] = "flex"
         context.user_data['downpayment_pct'] = 0.0
@@ -311,7 +318,7 @@ async def get_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True),
             parse_mode="Markdown"
         )
-        return START_MONTH
+        return START_MONTH_STEP
 
 async def get_dp(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip().replace('%', '')
@@ -327,7 +334,7 @@ async def get_dp(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True),
         parse_mode="Markdown"
     )
-    return DURATION
+    return DURATION_STEP
 
 async def get_duration(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
@@ -340,7 +347,7 @@ async def get_duration(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True),
         parse_mode="Markdown"
     )
-    return KM
+    return KM_STEP
 
 async def get_start_month(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['start_month'] = int(update.message.text.strip().split()[0])
@@ -350,7 +357,7 @@ async def get_start_month(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True),
         parse_mode="Markdown"
     )
-    return KM
+    return KM_STEP
 
 async def get_km(update: Update, context: ContextTypes.DEFAULT_TYPE):
     km_val = int(update.message.text.strip().split()[0])
@@ -370,7 +377,7 @@ async def get_km(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True),
         parse_mode="Markdown"
     )
-    return ADDONS
+    return ADDONS_STEP
 
 async def get_addons_and_finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
     choice = update.message.text.strip()
@@ -443,19 +450,19 @@ if __name__ == "__main__":
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('start', start)],
         states={
-            PRESET_OR_CUSTOM: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_choice)],
+            CHOICE_STEP: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_choice)],
             CUSTOM_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_custom_price)],
             CUSTOM_YEAR: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_custom_year)],
             CUSTOM_ODOMETER: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_custom_odometer)],
             CUSTOM_FUEL: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_custom_fuel)],
-            PLAN: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_plan)],
-            DP: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_dp)],
-            DURATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_duration)],
-            START_MONTH: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_start_month)],
-            KM: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_km)],
-            ADDONS: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_addons_and_finish)],
+            PLAN_STEP: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_plan)],
+            DP_STEP: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_dp)],
+            DURATION_STEP: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_duration)],
+            START_MONTH_STEP: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_start_month)],
+            KM_STEP: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_km)],
+            ADDONS_STEP: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_addons_and_finish)],
         },
-        fallbacks=[CommandHandler('cancel', cancel)]
+        fallbacks=[CommandHandler('start', start), CommandHandler('cancel', cancel)]
     )
 
     app.add_handler(conv_handler)
