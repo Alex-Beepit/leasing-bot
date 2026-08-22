@@ -4,11 +4,12 @@ import re
 import time
 import datetime
 import threading
-import requests
-from bs4 import BeautifulSoup
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from dataclasses import dataclass
 from PIL import Image as PILImage
+
+import cloudscraper
+from bs4 import BeautifulSoup
 
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import (
@@ -45,14 +46,7 @@ def run_health_server():
     server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
     server.serve_forever()
 
-# --- CAR.GR SCRAPER & CACHE ---
-FALLBACK_PRESETS = {
-    "Fiat 500 Hybrid (2022)": {"name": "Fiat 500 Hybrid", "price": 14500.0, "year": 2022, "odometer": 35000, "fuel": "hybrid"},
-    "Peugeot 208 Diesel (2021)": {"name": "Peugeot 208 Diesel", "price": 16800.0, "year": 2021, "odometer": 52000, "fuel": "diesel"},
-    "Peugeot e-2008 EV (2022)": {"name": "Peugeot e-2008 Electric", "price": 24500.0, "year": 2022, "odometer": 28000, "fuel": "electric"},
-    "Nissan Qashqai (2021)": {"name": "Nissan Qashqai 1.3T", "price": 21500.0, "year": 2021, "odometer": 45000, "fuel": "gasoline"},
-}
-
+# --- CAR.GR LIVE CLOUDSCRAPER ---
 CACHED_FLEET = {}
 LAST_FETCH_TIME = 0
 
@@ -60,64 +54,84 @@ def fetch_leonessa_cars(force_refresh=False):
     global CACHED_FLEET, LAST_FETCH_TIME
     current_time = time.time()
     
-    # Cache για 1 ώρα (3600 δευτερόλεπτα)
-    if CACHED_FLEET and (current_time - LAST_FETCH_TIME < 3600) and not force_refresh:
+    # Cache για 15 λεπτά για άμεση ταχύτητα
+    if CACHED_FLEET and (current_time - LAST_FETCH_TIME < 900) and not force_refresh:
         return CACHED_FLEET
 
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
-
     try:
-        response = requests.get(CAR_GR_URL, headers=headers, timeout=10)
+        # Δημιουργία scraper με browser fingerprinting
+        scraper = cloudscraper.create_scraper(
+            browser={
+                'browser': 'chrome',
+                'platform': 'windows',
+                'desktop': True
+            }
+        )
+        
+        response = scraper.get(CAR_GR_URL, timeout=15)
         if response.status_code != 200:
-            return CACHED_FLEET if CACHED_FLEET else FALLBACK_PRESETS
+            return CACHED_FLEET
 
         soup = BeautifulSoup(response.text, 'html.parser')
         cars = {}
 
-        # Εντοπισμός αγγελιών στο car.gr
-        items = soup.select('.row.vehicle, .classified, a[href*="/cars/view/"]')
-        
+        # Εντοπισμός καρτών οχημάτων στο Car.gr
+        items = soup.find_all(['div', 'a', 'article'], class_=lambda c: c and ('vehicle' in c or 'classified' in c or 'item' in c or 'card' in c))
+        if not items:
+            items = soup.select('a[href*="/cars/view/"]')
+
         for item in items:
-            title_elem = item.select_one('h2, .title, [class*="title"]')
-            price_elem = item.select_one('.price, [class*="price"]')
-            
+            title_elem = item.find(['h2', 'h3', 'h4', 'span'], class_=lambda c: c and ('title' in c or 'header' in c or 'name' in c))
             if not title_elem:
-                continue
-                
-            title = title_elem.get_text(strip=True)
-            if len(title) < 4:
+                title_elem = item.find('h2') or item.find('h3')
+            
+            price_elem = item.find(['span', 'div', 'p'], class_=lambda c: c and 'price' in c)
+            
+            full_text = item.get_text(" ", strip=True)
+            if not full_text:
                 continue
 
+            title = title_elem.get_text(strip=True) if title_elem else ""
+            if not title:
+                match = re.search(r'([A-Za-zΑ-Ωα-ω0-9\s\.\-]{5,35})\s+\'?(201[5-9]|202[0-6])', full_text)
+                if match:
+                    title = match.group(1).strip()
+
+            if len(title) < 3:
+                continue
+
+            # Εξαγωγή Τιμής
             price = 15000.0
             if price_elem:
-                raw_price = price_elem.get_text(strip=True)
-                clean_p = re.sub(r'[^\d]', '', raw_price)
+                clean_p = re.sub(r'[^\d]', '', price_elem.get_text())
                 if clean_p:
                     price = float(clean_p)
+            else:
+                price_match = re.search(r'(\d{1,3}(?:\.\d{3})+|\d{4,5})\s*€', full_text)
+                if price_match:
+                    price = float(price_match.group(1).replace('.', ''))
 
-            # Ανίχνευση χρονολογίας & χιλιομέτρων από το κείμενο της κάρτας
-            full_text = item.get_text()
-            
+            # Εξαγωγή Έτους
             year_match = re.search(r'\b(201[5-9]|202[0-6])\b', full_text)
             year = int(year_match.group(1)) if year_match else 2021
 
-            km_match = re.search(r'(\d{1,3}(?:\.\d{3})*|\d+)\s*χλμ', full_text)
+            # Εξαγωγή Χιλιομέτρων
+            km_match = re.search(r'(\d{1,3}(?:\.\d{3})*|\d+)\s*(?:χλμ|km)', full_text, re.IGNORECASE)
             odometer = int(km_match.group(1).replace('.', '')) if km_match else 45000
 
-            fuel = "gasoline"
+            # Εξαγωγή Καυσίμου
             lower_text = full_text.lower()
+            fuel = "gasoline"
             if "diesel" in lower_text or "πετρέλαιο" in lower_text:
                 fuel = "diesel"
             elif "hybrid" in lower_text or "υβριδικό" in lower_text:
                 fuel = "hybrid"
-            elif "electric" in lower_text or "ηλεκτρικό" in lower_text:
+            elif "electric" in lower_text or "ηλεκτρικό" in lower_text or " ev " in lower_text:
                 fuel = "electric"
 
-            key = f"{title[:28]} ({year})"
+            key = f"{title[:25]} ({year}) - {price:,.0f}€"
             cars[key] = {
-                "name": title[:40],
+                "name": title[:35],
                 "price": price,
                 "year": year,
                 "odometer": odometer,
@@ -128,12 +142,11 @@ def fetch_leonessa_cars(force_refresh=False):
             CACHED_FLEET = cars
             LAST_FETCH_TIME = current_time
             return CACHED_FLEET
-        else:
-            return FALLBACK_PRESETS
 
     except Exception as e:
-        print(f"Error scraping car.gr: {e}")
-        return CACHED_FLEET if CACHED_FLEET else FALLBACK_PRESETS
+        print(f"Scraping error: {e}")
+
+    return CACHED_FLEET
 
 # Καταστάσεις διαλόγου
 CHOICE_STEP, CUSTOM_PRICE, CUSTOM_YEAR, CUSTOM_ODOMETER, CUSTOM_FUEL, PLAN_STEP, DP_STEP, DURATION_STEP, START_MONTH_STEP, KM_STEP, ADDONS_STEP = range(11)
@@ -325,12 +338,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     fleet = fetch_leonessa_cars()
     
-    fleet_buttons = [[k] for k in list(fleet.keys())[:8]]
+    fleet_buttons = []
+    if fleet:
+        fleet_buttons = [[k] for k in list(fleet.keys())[:10]]
+    
     fleet_buttons.append(["🔄 Ανανέωση Στόλου (Car.gr)", "Αλλο Αυτοκινητο (Χειροκινητα)"])
     
     await update.message.reply_text(
         "🚗 **Καλωσήρθατε στο beepit Leasing!**\n\n"
-        "Επιλέξτε ένα από τα **διαθέσιμα αυτοκίνητα της έκθεσης Leonessa Cars (Car.gr)** ή εισάγετε τα δικά σας στοιχεία:",
+        "Επιλέξτε ένα από τα **διαθέσιμα αυτοκίνητα της έκθεσης Leonessa Cars (Live Car.gr)** ή εισάγετε τα δικά σας στοιχεία:",
         reply_markup=ReplyKeyboardMarkup(fleet_buttons, one_time_keyboard=True, resize_keyboard=True),
         parse_mode="Markdown"
     )
@@ -340,6 +356,7 @@ async def handle_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     choice = update.message.text.strip()
     
     if "Ανανέωση" in choice:
+        await update.message.reply_text("🔄 Γίνεται συγχρονισμός με το Car.gr...")
         fetch_leonessa_cars(force_refresh=True)
         return await start(update, context)
 
@@ -592,5 +609,5 @@ if __name__ == "__main__":
     )
 
     app.add_handler(conv_handler)
-    print("🚀 Το Telegram Bot είναι ONLINE με Live Car.gr Sync!")
+    print("🚀 Το Telegram Bot είναι ONLINE με Cloudscraper Car.gr Sync!")
     app.run_polling()
