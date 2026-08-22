@@ -23,7 +23,7 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 TELEGRAM_TOKEN = "8902761856:AAEmSuEs96Bxm2XA-H3vBiyrPU0wNqhPB9g"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# Dummy HTTP Server για να ικανοποιεί το Health Check του Render
+# Dummy HTTP Server για το Health Check του Render
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -192,7 +192,7 @@ def generate_pdf_quote(quote: LeaseQuote, plan_type: str, months: int) -> io.Byt
 
     data_summary = [
         [Paragraph("Vehicle", bold_style), Paragraph(str(quote.car_name), normal_style)],
-        [Paragraph("Plan Type", bold_style), Paragraph(f"{plan_type.upper()} ({months} Months)" if plan_type == 'fixed' else "FLEX (Month-to-Month)", normal_style)],
+        [Paragraph("Plan Type", bold_style), Paragraph(f"CLASSIC ({months} Months)" if plan_type == 'classic' else "FLEX (Month-to-Month)", normal_style)],
         [Paragraph("Downpayment", bold_style), Paragraph(f"{quote.upfront_downpayment:,.2f} EUR", normal_style)],
         [Paragraph("Monthly Rate (incl. 24% VAT)", bold_style), Paragraph(f"<b>{quote.monthly_rate_incl_vat:,.2f} EUR</b>", bold_style)],
         [Paragraph("Monthly Rate (excl. VAT)", bold_style), Paragraph(f"{quote.monthly_rate_excl_vat:,.2f} EUR", normal_style)],
@@ -200,7 +200,7 @@ def generate_pdf_quote(quote: LeaseQuote, plan_type: str, months: int) -> io.Byt
         [Paragraph("TOTAL UPFRONT PAYMENT", bold_style), Paragraph(f"<b>{quote.upfront_total_payable:,.2f} EUR</b>", bold_style)],
     ]
 
-    if plan_type == 'fixed':
+    if plan_type == 'classic':
         data_summary.append([Paragraph("Buyout Option at End", bold_style), Paragraph(f"<b>{quote.buyout_final_payable:,.2f} EUR</b> (-12% Discount & Bonus)", normal_style)])
 
     table = Table(data_summary, colWidths=[200, 300])
@@ -254,7 +254,7 @@ async def handle_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['odometer'] = data['odometer']
         context.user_data['fuel'] = data['fuel']
         
-        reply_keyboard = [["Fixed (36-60 μηνες)", "Flex (Χωρις δεσμευση)"]]
+        reply_keyboard = [["Classic", "Flex"]]
         await update.message.reply_text(
             f"✅ Επιλέξατε: **{data['name']}**\n\nΕπιλέξτε **πρόγραμμα μίσθωσης**:",
             reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True),
@@ -302,7 +302,7 @@ async def get_custom_fuel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     fuel_map = {"Βενζίνη": "gasoline", "Πετρέλαιο": "diesel", "Υβριδικό": "hybrid", "Ηλεκτρικό": "electric"}
     context.user_data['fuel'] = fuel_map.get(update.message.text.strip(), "gasoline")
     
-    reply_keyboard = [["Fixed (36-60 μηνες)", "Flex (Χωρις δεσμευση)"]]
+    reply_keyboard = [["Classic", "Flex"]]
     await update.message.reply_text(
         "5️⃣ Επίλεξε **πρόγραμμα μίσθωσης**:",
         reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True),
@@ -313,15 +313,15 @@ async def get_custom_fuel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def get_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     plan_text = update.message.text.strip().lower()
     
-    if "fixed" in plan_text:
-        context.user_data['plan'] = "fixed"
-        reply_keyboard = [["0%", "10%", "20%"]]
+    if "classic" in plan_text:
+        context.user_data['plan'] = "classic"
+        reply_keyboard = [["36 μήνες", "48 μήνες", "60 μήνες"]]
         await update.message.reply_text(
-            "Επίλεξε **ποσοστό προκαταβολής**:",
+            "Επίλεξε **διάρκεια μίσθωσης** για το Classic:",
             reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True),
             parse_mode="Markdown"
         )
-        return DP_STEP
+        return DURATION_STEP
     else:
         context.user_data['plan'] = "flex"
         context.user_data['downpayment_pct'] = 0.0
@@ -338,6 +338,18 @@ async def get_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return START_MONTH_STEP
 
+async def get_duration(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    context.user_data['months'] = int(text.split()[0])
+    
+    reply_keyboard = [["0%", "10%", "20%"]]
+    await update.message.reply_text(
+        "Επίλεξε **ποσοστό προκαταβολής**:",
+        reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True),
+        parse_mode="Markdown"
+    )
+    return DP_STEP
+
 async def get_dp(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip().replace('%', '')
     try:
@@ -346,19 +358,6 @@ async def get_dp(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except ValueError:
         context.user_data['downpayment_pct'] = 0.0
 
-    reply_keyboard = [["36 μήνες", "48 μήνες", "60 μήνες"]]
-    await update.message.reply_text(
-        "Επίλεξε **διάρκεια μίσθωσης**:",
-        reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True),
-        parse_mode="Markdown"
-    )
-    return DURATION_STEP
-
-async def get_duration(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
-    context.user_data['months'] = int(text.split()[0])
-    context.user_data['start_month'] = 1
-    
     reply_keyboard = [["20000 χλμ", "30000 χλμ", "40000 χλμ"]]
     await update.message.reply_text(
         "Επίλεξε **ετήσια χιλιόμετρα χρήσης**:",
@@ -424,7 +423,7 @@ async def get_addons_and_finish(update: Update, context: ContextTypes.DEFAULT_TY
 
     dp_line = f"• Προκαταβολή ({int(data.get('downpayment_pct', 0))}%): *{quote.upfront_downpayment:,.2f} €*\n" if quote.upfront_downpayment > 0 else ""
     buyout_section = ""
-    if data['plan'] == 'fixed':
+    if data['plan'] == 'classic':
         buyout_section = (
             "━━━━━━━━━━━━━━━━━━━━\n"
             "🔑 **ΔΙΚΑΙΩΜΑ ΕΞΑΓΟΡΑΣ (ΣΤΗ ΛΗΞΗ)**\n"
@@ -449,7 +448,7 @@ async def get_addons_and_finish(update: Update, context: ContextTypes.DEFAULT_TY
 
     await update.message.reply_text(result, reply_markup=ReplyKeyboardRemove(), parse_mode="Markdown")
 
-    pdf_buffer = generate_pdf_quote(quote, data['plan'], data.get('months', 12))
+    pdf_buffer = generate_pdf_quote(quote, data['plan'], data.get('months', 36))
     await update.message.reply_document(
         document=pdf_buffer,
         filename=f"Beepit_Quote_{quote.car_name.replace(' ', '_')}.pdf",
@@ -463,7 +462,6 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 if __name__ == "__main__":
-    # Εκκίνηση health check server σε ξεχωριστό background thread
     t = threading.Thread(target=run_health_server, daemon=True)
     t.start()
 
@@ -488,5 +486,5 @@ if __name__ == "__main__":
     )
 
     app.add_handler(conv_handler)
-    print("🚀 Το Telegram Bot είναι ONLINE & Live στο Render!")
+    print("🚀 Το Telegram Bot είναι ONLINE!")
     app.run_polling()
