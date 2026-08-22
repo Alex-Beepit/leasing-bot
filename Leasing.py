@@ -15,10 +15,13 @@ from fpdf import FPDF
 
 TELEGRAM_TOKEN = "8902761856:AAEmSuEs96Bxm2XA-H3vBiyrPU0wNqhPB9g"
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+LOCAL_FONT_PATH = os.path.join(BASE_DIR, "font.ttf")
+LOCAL_LOGO_PATH = os.path.join(BASE_DIR, "logo.png")
+
 # Καταστάσεις διαλόγου
 PRESET_OR_CUSTOM, CUSTOM_PRICE, CUSTOM_YEAR, CUSTOM_ODOMETER, CUSTOM_FUEL, PLAN, DP, DURATION, START_MONTH, KM, ADDONS = range(11)
 
-# Preset Στόλος (Έτοιμα Μοντέλα)
 FLEET_PRESETS = {
     "🚗 Fiat 500 Hybrid (2022)": {"name": "Fiat 500 Hybrid", "price": 14500, "year": 2022, "odometer": 35000, "fuel": "hybrid"},
     "🚙 Peugeot 208 Diesel (2021)": {"name": "Peugeot 208 Diesel", "price": 16800, "year": 2021, "odometer": 52000, "fuel": "diesel"},
@@ -105,7 +108,6 @@ def calculate_leasing(
     else:
         monthly_rate_excl_vat = total_cost_excl_vat / effective_months
 
-    # Add-ons
     addons_monthly_total = 0.0
     if "Μηδενική Απαλλαγή (+25€)" in selected_addons:
         addons_monthly_total += 25.0
@@ -146,37 +148,35 @@ def generate_pdf_quote(quote: LeaseQuote, plan_type: str, months: int) -> io.Byt
     pdf = FPDF()
     pdf.add_page()
     pdf.set_auto_page_break(auto=True, margin=15)
-    
-    # Προσθήκη DejaVu Sans που υπάρχει έτοιμη στο πακέτο fpdf2
-    pdf.add_font("DejaVu", "", "DejaVuSans.ttf")
-    pdf.add_font("DejaVu", "B", "DejaVuSans-Bold.ttf")
-    pdf.set_font("DejaVu", "", 10)
 
-    # Έλεγχος & Σχεδίαση Logo
-    logo_files = ["logo.png", "Flex-LeaseB.png"]
-    for lf in logo_files:
-        if os.path.exists(lf):
-            try:
-                pdf.image(lf, x=15, y=12, w=45)
-                pdf.ln(18)
-                break
-            except Exception:
-                pass
+    # Φόρτωση του font.ttf που ανέβηκε στο αποθετήριο
+    if os.path.exists(LOCAL_FONT_PATH):
+        pdf.add_font("CustomGreek", "", LOCAL_FONT_PATH)
+        font_family = "CustomGreek"
+    else:
+        font_family = "helvetica"
 
-    # Επικεφαλίδα
-    pdf.set_font("DejaVu", "B", 16)
+    # Logo
+    if os.path.exists(LOCAL_LOGO_PATH):
+        try:
+            pdf.image(LOCAL_LOGO_PATH, x=15, y=12, w=55)
+            pdf.ln(20)
+        except Exception:
+            pdf.ln(5)
+    else:
+        pdf.ln(5)
+
+    # Τίτλος & Ημερομηνία
+    pdf.set_font(font_family, "", 16)
     pdf.set_text_color(13, 35, 58)
-    pdf.cell(0, 10, "BEEPIT LEASING - ΕΠΙΣΗΜΗ ΠΡΟΣΦΟΡΑ", ln=True)
-    
-    pdf.set_font("DejaVu", "", 9)
+    pdf.cell(0, 10, "ΕΠΙΣΗΜΗ ΠΡΟΣΦΟΡΑ LEASING", ln=True)
+
+    pdf.set_font(font_family, "", 9)
     pdf.set_text_color(100, 100, 100)
-    pdf.cell(0, 6, f"Ημερομηνία: {datetime.datetime.now().strftime('%d/%m/%Y')}", ln=True)
-    pdf.ln(6)
+    pdf.cell(0, 5, f"Ημερομηνία: {datetime.datetime.now().strftime('%d/%m/%Y')}", ln=True)
+    pdf.ln(8)
 
-    # Πίνακας Στοιχείων
-    pdf.set_font("DejaVu", "", 10)
-    pdf.set_text_color(20, 20, 20)
-
+    # Πίνακας Προσφοράς
     rows = [
         ("Όχημα", str(quote.car_name)),
         ("Πρόγραμμα", f"{plan_type.upper()} ({months} Μήνες)" if plan_type == 'fixed' else "FLEX (Month-to-Month)"),
@@ -184,39 +184,44 @@ def generate_pdf_quote(quote: LeaseQuote, plan_type: str, months: int) -> io.Byt
         ("Μηνιαίο Μίσθωμα (με ΦΠΑ 24%)", f"{quote.monthly_rate_incl_vat:,.2f} €"),
         ("Μηνιαίο Μίσθωμα (προ ΦΠΑ)", f"{quote.monthly_rate_excl_vat:,.2f} €"),
         ("Εγγύηση Μισθωμάτων", f"{quote.upfront_guarantee:,.2f} €"),
-        ("Σύνολο Αρχικής Πληρωμής", f"{quote.upfront_total_payable:,.2f} €"),
+        ("ΣΥΝΟΛΟ ΑΡΧΙΚΗΣ ΠΛΗΡΩΜΗΣ", f"{quote.upfront_total_payable:,.2f} €")
     ]
 
     if plan_type == 'fixed':
         rows.append(("Τελικό Ποσό Εξαγοράς στη Λήξη", f"{quote.buyout_final_payable:,.2f} € (-12% & Bonus)"))
 
-    for label, val in rows:
-        pdf.set_fill_color(245, 247, 250)
-        pdf.set_font("DejaVu", "B", 10)
-        pdf.cell(85, 8, f"  {label}", border=1, fill=True)
-        pdf.set_font("DejaVu", "", 10)
-        pdf.cell(95, 8, f"  {val}", border=1, ln=True)
+    for i, (label, val) in enumerate(rows):
+        pdf.set_font(font_family, "", 10)
+        pdf.set_text_color(13, 35, 58)
+        if i % 2 == 0:
+            pdf.set_fill_color(245, 247, 250)
+        else:
+            pdf.set_fill_color(255, 255, 255)
+        
+        pdf.cell(85, 9, f"  {label}", border=1, fill=True)
+        pdf.cell(95, 9, f"  {val}", border=1, fill=True, ln=True)
 
     pdf.ln(8)
 
     # Add-ons
     if quote.selected_addons:
-        pdf.set_font("DejaVu", "B", 10)
-        pdf.cell(0, 6, "Επιλεγμένες Καλύψεις / Add-ons:", ln=True)
-        pdf.set_font("DejaVu", "", 9)
+        pdf.set_font(font_family, "", 10)
+        pdf.set_text_color(13, 35, 58)
+        pdf.cell(0, 6, "Επιλεγμένα Add-ons:", ln=True)
+        pdf.set_font(font_family, "", 9)
+        pdf.set_text_color(50, 50, 50)
         for addon in quote.selected_addons:
-            pdf.cell(0, 5, f"  • {addon}", ln=True)
-        pdf.ln(6)
+            pdf.cell(0, 5, f" • {addon}", ln=True)
+        pdf.ln(4)
 
-    # Υποσημείωση
-    pdf.set_font("DejaVu", "", 8)
-    pdf.set_text_color(120, 120, 120)
-    pdf.multi_cell(0, 4, "Περιλαμβάνονται: Πλήρης Συντήρηση, Μικτή Ασφάλεια, Οδική Βοήθεια 24/7, Άμεση Αλλαγή Οχήματος σε περίπτωση βλάβης.")
+    pdf.set_font(font_family, "", 8)
+    pdf.set_text_color(100, 100, 100)
+    pdf.multi_cell(0, 5, "Περιλαμβάνονται: Πλήρης Συντήρηση & Service, Μικτή Ασφάλεια, Οδική Βοήθεια 24/7, Άμεση Αντικατάσταση Οχήματος σε περίπτωση βλάβης.")
 
-    pdf_output = io.BytesIO()
-    pdf.output(pdf_output)
-    pdf_output.seek(0)
-    return pdf_output
+    buffer = io.BytesIO()
+    pdf.output(buffer)
+    buffer.seek(0)
+    return buffer
 
 # --- TELEGRAM HANDLERS ---
 
@@ -462,12 +467,12 @@ if __name__ == "__main__":
             DP: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_dp)],
             DURATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_duration)],
             START_MONTH: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_start_month)],
-            KM: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_km)],
+            KM: [MessageHandler(filters.TEXT & ~CLOSES_OR_COMMAND := filters.COMMAND, get_km)],
             ADDONS: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_addons_and_finish)],
         },
         fallbacks=[CommandHandler('cancel', cancel)]
     )
 
     app.add_handler(conv_handler)
-    print("🚀 Το αναβαθμισμένο Telegram Bot είναι ONLINE!")
+    print("🚀 Το Telegram Bot είναι ONLINE!")
     app.run_polling()
