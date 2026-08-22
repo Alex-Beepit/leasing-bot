@@ -4,6 +4,7 @@ import datetime
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from dataclasses import dataclass
+from PIL import Image as PILImage
 
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import (
@@ -174,14 +175,22 @@ def generate_pdf_quote(quote: LeaseQuote, plan_type: str, months: int) -> io.Byt
     normal_style = ParagraphStyle('NormalStyle', parent=styles['Normal'], fontName="Helvetica", fontSize=10, textColor=colors.HexColor("#2C3E50"))
     bold_style = ParagraphStyle('BoldStyle', parent=styles['Normal'], fontName="Helvetica-Bold", fontSize=10, textColor=colors.HexColor("#0D233A"))
 
+    # Εισαγωγή Logo με αυτόματη διατήρηση αναλογιών (Aspect Ratio)
     logo_files = ["Flex-LeaseB.png", "logo.png", os.path.join(BASE_DIR, "Flex-LeaseB.png"), os.path.join(BASE_DIR, "logo.png")]
     for lf in logo_files:
         if os.path.exists(lf):
             try:
-                logo_img = Image(lf, width=150, height=42)
+                with PILImage.open(lf) as img_temp:
+                    orig_w, orig_h = img_temp.size
+                
+                # Ορίζουμε το επιθυμητό πλάτος και υπολογίζουμε ισομετρικά το ύψος
+                target_w = 145.0
+                target_h = target_w * (orig_h / orig_w)
+                
+                logo_img = Image(lf, width=target_w, height=target_h)
                 logo_img.hAlign = 'LEFT'
                 story.append(logo_img)
-                story.append(Spacer(1, 10))
+                story.append(Spacer(1, 12))
                 break
             except Exception:
                 pass
