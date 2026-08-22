@@ -1,7 +1,11 @@
 import os
 import io
+import re
+import time
 import datetime
 import threading
+import requests
+from bs4 import BeautifulSoup
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from dataclasses import dataclass
 from PIL import Image as PILImage
@@ -23,8 +27,9 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 
 TELEGRAM_TOKEN = "8902761856:AAEmSuEs96Bxm2XA-H3vBiyrPU0wNqhPB9g"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+CAR_GR_URL = "https://leonessa-cars.car.gr/cars/"
 
-# Dummy HTTP Server για το Health Check του Render
+# --- DUMMY HTTP SERVER ΓΙΑ RENDER HEALTH CHECK ---
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -40,15 +45,98 @@ def run_health_server():
     server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
     server.serve_forever()
 
-# Καταστάσεις διαλόγου
-CHOICE_STEP, CUSTOM_PRICE, CUSTOM_YEAR, CUSTOM_ODOMETER, CUSTOM_FUEL, PLAN_STEP, DP_STEP, DURATION_STEP, START_MONTH_STEP, KM_STEP, ADDONS_STEP = range(11)
-
-FLEET_PRESETS = {
+# --- CAR.GR SCRAPER & CACHE ---
+FALLBACK_PRESETS = {
     "Fiat 500 Hybrid (2022)": {"name": "Fiat 500 Hybrid", "price": 14500.0, "year": 2022, "odometer": 35000, "fuel": "hybrid"},
     "Peugeot 208 Diesel (2021)": {"name": "Peugeot 208 Diesel", "price": 16800.0, "year": 2021, "odometer": 52000, "fuel": "diesel"},
     "Peugeot e-2008 EV (2022)": {"name": "Peugeot e-2008 Electric", "price": 24500.0, "year": 2022, "odometer": 28000, "fuel": "electric"},
     "Nissan Qashqai (2021)": {"name": "Nissan Qashqai 1.3T", "price": 21500.0, "year": 2021, "odometer": 45000, "fuel": "gasoline"},
 }
+
+CACHED_FLEET = {}
+LAST_FETCH_TIME = 0
+
+def fetch_leonessa_cars(force_refresh=False):
+    global CACHED_FLEET, LAST_FETCH_TIME
+    current_time = time.time()
+    
+    # Cache για 1 ώρα (3600 δευτερόλεπτα)
+    if CACHED_FLEET and (current_time - LAST_FETCH_TIME < 3600) and not force_refresh:
+        return CACHED_FLEET
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+
+    try:
+        response = requests.get(CAR_GR_URL, headers=headers, timeout=10)
+        if response.status_code != 200:
+            return CACHED_FLEET if CACHED_FLEET else FALLBACK_PRESETS
+
+        soup = BeautifulSoup(response.text, 'html.parser')
+        cars = {}
+
+        # Εντοπισμός αγγελιών στο car.gr
+        items = soup.select('.row.vehicle, .classified, a[href*="/cars/view/"]')
+        
+        for item in items:
+            title_elem = item.select_one('h2, .title, [class*="title"]')
+            price_elem = item.select_one('.price, [class*="price"]')
+            
+            if not title_elem:
+                continue
+                
+            title = title_elem.get_text(strip=True)
+            if len(title) < 4:
+                continue
+
+            price = 15000.0
+            if price_elem:
+                raw_price = price_elem.get_text(strip=True)
+                clean_p = re.sub(r'[^\d]', '', raw_price)
+                if clean_p:
+                    price = float(clean_p)
+
+            # Ανίχνευση χρονολογίας & χιλιομέτρων από το κείμενο της κάρτας
+            full_text = item.get_text()
+            
+            year_match = re.search(r'\b(201[5-9]|202[0-6])\b', full_text)
+            year = int(year_match.group(1)) if year_match else 2021
+
+            km_match = re.search(r'(\d{1,3}(?:\.\d{3})*|\d+)\s*χλμ', full_text)
+            odometer = int(km_match.group(1).replace('.', '')) if km_match else 45000
+
+            fuel = "gasoline"
+            lower_text = full_text.lower()
+            if "diesel" in lower_text or "πετρέλαιο" in lower_text:
+                fuel = "diesel"
+            elif "hybrid" in lower_text or "υβριδικό" in lower_text:
+                fuel = "hybrid"
+            elif "electric" in lower_text or "ηλεκτρικό" in lower_text:
+                fuel = "electric"
+
+            key = f"{title[:28]} ({year})"
+            cars[key] = {
+                "name": title[:40],
+                "price": price,
+                "year": year,
+                "odometer": odometer,
+                "fuel": fuel
+            }
+
+        if cars:
+            CACHED_FLEET = cars
+            LAST_FETCH_TIME = current_time
+            return CACHED_FLEET
+        else:
+            return FALLBACK_PRESETS
+
+    except Exception as e:
+        print(f"Error scraping car.gr: {e}")
+        return CACHED_FLEET if CACHED_FLEET else FALLBACK_PRESETS
+
+# Καταστάσεις διαλόγου
+CHOICE_STEP, CUSTOM_PRICE, CUSTOM_YEAR, CUSTOM_ODOMETER, CUSTOM_FUEL, PLAN_STEP, DP_STEP, DURATION_STEP, START_MONTH_STEP, KM_STEP, ADDONS_STEP = range(11)
 
 @dataclass
 class LeaseQuote:
@@ -175,7 +263,6 @@ def generate_pdf_quote(quote: LeaseQuote, plan_type: str, months: int) -> io.Byt
     normal_style = ParagraphStyle('NormalStyle', parent=styles['Normal'], fontName="Helvetica", fontSize=10, textColor=colors.HexColor("#2C3E50"))
     bold_style = ParagraphStyle('BoldStyle', parent=styles['Normal'], fontName="Helvetica-Bold", fontSize=10, textColor=colors.HexColor("#0D233A"))
 
-    # Εισαγωγή Logo με αυτόματη διατήρηση αναλογιών (Aspect Ratio)
     logo_files = ["Flex-LeaseB.png", "logo.png", os.path.join(BASE_DIR, "Flex-LeaseB.png"), os.path.join(BASE_DIR, "logo.png")]
     for lf in logo_files:
         if os.path.exists(lf):
@@ -183,7 +270,6 @@ def generate_pdf_quote(quote: LeaseQuote, plan_type: str, months: int) -> io.Byt
                 with PILImage.open(lf) as img_temp:
                     orig_w, orig_h = img_temp.size
                 
-                # Ορίζουμε το επιθυμητό πλάτος και υπολογίζουμε ισομετρικά το ύψος
                 target_w = 145.0
                 target_h = target_w * (orig_h / orig_w)
                 
@@ -237,11 +323,15 @@ def generate_pdf_quote(quote: LeaseQuote, plan_type: str, months: int) -> io.Byt
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
-    reply_keyboard = [[k] for k in FLEET_PRESETS.keys()] + [["Αλλο Αυτοκινητο (Χειροκινητα)"]]
+    fleet = fetch_leonessa_cars()
+    
+    fleet_buttons = [[k] for k in list(fleet.keys())[:8]]
+    fleet_buttons.append(["🔄 Ανανέωση Στόλου (Car.gr)", "Αλλο Αυτοκινητο (Χειροκινητα)"])
+    
     await update.message.reply_text(
         "🚗 **Καλωσήρθατε στο beepit Leasing!**\n\n"
-        "Επιλέξτε ένα όχημα από τον στόλο μας ή εισάγετε τα δικά σας στοιχεία:",
-        reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True),
+        "Επιλέξτε ένα από τα **διαθέσιμα αυτοκίνητα της έκθεσης Leonessa Cars (Car.gr)** ή εισάγετε τα δικά σας στοιχεία:",
+        reply_markup=ReplyKeyboardMarkup(fleet_buttons, one_time_keyboard=True, resize_keyboard=True),
         parse_mode="Markdown"
     )
     return CHOICE_STEP
@@ -249,14 +339,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     choice = update.message.text.strip()
     
+    if "Ανανέωση" in choice:
+        fetch_leonessa_cars(force_refresh=True)
+        return await start(update, context)
+
+    fleet = fetch_leonessa_cars()
     matched_key = None
-    for k in FLEET_PRESETS:
+    for k in fleet:
         if k.lower() in choice.lower() or choice.lower() in k.lower():
             matched_key = k
             break
 
     if matched_key:
-        data = FLEET_PRESETS[matched_key]
+        data = fleet[matched_key]
         context.user_data['car_name'] = data['name']
         context.user_data['price'] = data['price']
         context.user_data['year'] = data['year']
@@ -265,7 +360,9 @@ async def handle_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         reply_keyboard = [["Classic", "Flex"]]
         await update.message.reply_text(
-            f"✅ Επιλέξατε: **{data['name']}**\n\nΕπιλέξτε **πρόγραμμα μίσθωσης**:",
+            f"✅ Επιλέξατε από Car.gr:\n**{data['name']}**\n"
+            f"• Αξία: {data['price']:,.0f} € | Έτος: {data['year']} | Χλμ: {data['odometer']:,}\n\n"
+            f"Επιλέξτε **πρόγραμμα μίσθωσης**:",
             reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True),
             parse_mode="Markdown"
         )
@@ -495,5 +592,5 @@ if __name__ == "__main__":
     )
 
     app.add_handler(conv_handler)
-    print("🚀 Το Telegram Bot είναι ONLINE!")
+    print("🚀 Το Telegram Bot είναι ONLINE με Live Car.gr Sync!")
     app.run_polling()
