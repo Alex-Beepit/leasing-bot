@@ -1,7 +1,6 @@
 import os
 import io
 import datetime
-import requests
 from dataclasses import dataclass
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import (
@@ -12,45 +11,9 @@ from telegram.ext import (
     ContextTypes,
     filters,
 )
-
-# ReportLab για PDF & Unicode Fonts
-from reportlab.lib.pagesizes import A4
-from reportlab.lib import colors
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFont
+from fpdf import FPDF
 
 TELEGRAM_TOKEN = "8902761856:AAEmSuEs96Bxm2XA-H3vBiyrPU0wNqhPB9g"
-
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-FONT_REGULAR_PATH = os.path.join(BASE_DIR, "DejaVuSans.ttf")
-FONT_BOLD_PATH = os.path.join(BASE_DIR, "DejaVuSans-Bold.ttf")
-
-def setup_greek_fonts():
-    headers = {'User-Agent': 'Mozilla/5.0'}
-    if not os.path.exists(FONT_REGULAR_PATH):
-        try:
-            r = requests.get("https://github.com/dejavu-fonts/dejavu-fonts/raw/master/ttf/DejaVuSans.ttf", headers=headers, timeout=15)
-            with open(FONT_REGULAR_PATH, 'wb') as f:
-                f.write(r.content)
-        except Exception as e:
-            print(f"Error downloading Regular font: {e}")
-
-    if not os.path.exists(FONT_BOLD_PATH):
-        try:
-            r = requests.get("https://github.com/dejavu-fonts/dejavu-fonts/raw/master/ttf/DejaVuSans-Bold.ttf", headers=headers, timeout=15)
-            with open(FONT_BOLD_PATH, 'wb') as f:
-                f.write(r.content)
-        except Exception as e:
-            print(f"Error downloading Bold font: {e}")
-
-    if os.path.exists(FONT_REGULAR_PATH):
-        pdfmetrics.registerFont(TTFont('GreekFont', FONT_REGULAR_PATH))
-    if os.path.exists(FONT_BOLD_PATH):
-        pdfmetrics.registerFont(TTFont('GreekFont-Bold', FONT_BOLD_PATH))
-
-setup_greek_fonts()
 
 # Καταστάσεις διαλόγου
 PRESET_OR_CUSTOM, CUSTOM_PRICE, CUSTOM_YEAR, CUSTOM_ODOMETER, CUSTOM_FUEL, PLAN, DP, DURATION, START_MONTH, KM, ADDONS = range(11)
@@ -180,73 +143,80 @@ def calculate_leasing(
     )
 
 def generate_pdf_quote(quote: LeaseQuote, plan_type: str, months: int) -> io.BytesIO:
-    buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36)
-    styles = getSampleStyleSheet()
-    story = []
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    
+    # Προσθήκη DejaVu Sans που υπάρχει έτοιμη στο πακέτο fpdf2
+    pdf.add_font("DejaVu", "", "DejaVuSans.ttf")
+    pdf.add_font("DejaVu", "B", "DejaVuSans-Bold.ttf")
+    pdf.set_font("DejaVu", "", 10)
 
-    f_reg = 'GreekFont' if os.path.exists(FONT_REGULAR_PATH) else 'Helvetica'
-    f_bold = 'GreekFont-Bold' if os.path.exists(FONT_BOLD_PATH) else 'Helvetica-Bold'
-
-    title_style = ParagraphStyle('TitleStyle', fontName=f_bold, fontSize=16, textColor=colors.HexColor("#0D233A"), spaceAfter=5)
-    normal_style = ParagraphStyle('NormalStyle', fontName=f_reg, fontSize=10, textColor=colors.HexColor("#2C3E50"))
-    bold_style = ParagraphStyle('BoldStyle', fontName=f_bold, fontSize=10, textColor=colors.HexColor("#0D233A"))
-
-    # Εντοπισμός Logo
-    possible_logo_paths = [
-        os.path.join(BASE_DIR, "logo.png"),
-        os.path.join(BASE_DIR, "Flex-LeaseB.png"),
-        "logo.png",
-        "Flex-LeaseB.png"
-    ]
-    for lp in possible_logo_paths:
-        if os.path.exists(lp):
+    # Έλεγχος & Σχεδίαση Logo
+    logo_files = ["logo.png", "Flex-LeaseB.png"]
+    for lf in logo_files:
+        if os.path.exists(lf):
             try:
-                logo_img = Image(lp, width=150, height=42)
-                logo_img.hAlign = 'LEFT'
-                story.append(logo_img)
-                story.append(Spacer(1, 10))
+                pdf.image(lf, x=15, y=12, w=45)
+                pdf.ln(18)
                 break
-            except Exception as e:
-                print(f"Error rendering logo: {e}")
+            except Exception:
+                pass
 
-    story.append(Paragraph("ΕΠΙΣΗΜΗ ΠΡΟΣΦΟΡΑ LEASING", title_style))
-    story.append(Paragraph(f"Ημερομηνία: {datetime.datetime.now().strftime('%d/%m/%Y')}", normal_style))
-    story.append(Spacer(1, 15))
+    # Επικεφαλίδα
+    pdf.set_font("DejaVu", "B", 16)
+    pdf.set_text_color(13, 35, 58)
+    pdf.cell(0, 10, "BEEPIT LEASING - ΕΠΙΣΗΜΗ ΠΡΟΣΦΟΡΑ", ln=True)
+    
+    pdf.set_font("DejaVu", "", 9)
+    pdf.set_text_color(100, 100, 100)
+    pdf.cell(0, 6, f"Ημερομηνία: {datetime.datetime.now().strftime('%d/%m/%Y')}", ln=True)
+    pdf.ln(6)
 
-    data_summary = [
-        [Paragraph("Όχημα", bold_style), Paragraph(str(quote.car_name), normal_style)],
-        [Paragraph("Πρόγραμμα", bold_style), Paragraph(f"{plan_type.upper()} ({months} Μήνες)" if plan_type == 'fixed' else "FLEX (Month-to-Month)", normal_style)],
-        [Paragraph("Προκαταβολή", bold_style), Paragraph(f"{quote.upfront_downpayment:,.2f} €", normal_style)],
-        [Paragraph("Μηνιαίο Μίσθωμα (με ΦΠΑ)", bold_style), Paragraph(f"{quote.monthly_rate_incl_vat:,.2f} €", bold_style)],
-        [Paragraph("Μηνιαίο Μίσθωμα (προ ΦΠΑ)", bold_style), Paragraph(f"{quote.monthly_rate_excl_vat:,.2f} €", normal_style)],
-        [Paragraph("Εγγύηση Μισθωμάτων", bold_style), Paragraph(f"{quote.upfront_guarantee:,.2f} €", normal_style)],
-        [Paragraph("Σύνολο Αρχικής Πληρωμής", bold_style), Paragraph(f"{quote.upfront_total_payable:,.2f} €", bold_style)],
+    # Πίνακας Στοιχείων
+    pdf.set_font("DejaVu", "", 10)
+    pdf.set_text_color(20, 20, 20)
+
+    rows = [
+        ("Όχημα", str(quote.car_name)),
+        ("Πρόγραμμα", f"{plan_type.upper()} ({months} Μήνες)" if plan_type == 'fixed' else "FLEX (Month-to-Month)"),
+        ("Προκαταβολή", f"{quote.upfront_downpayment:,.2f} €"),
+        ("Μηνιαίο Μίσθωμα (με ΦΠΑ 24%)", f"{quote.monthly_rate_incl_vat:,.2f} €"),
+        ("Μηνιαίο Μίσθωμα (προ ΦΠΑ)", f"{quote.monthly_rate_excl_vat:,.2f} €"),
+        ("Εγγύηση Μισθωμάτων", f"{quote.upfront_guarantee:,.2f} €"),
+        ("Σύνολο Αρχικής Πληρωμής", f"{quote.upfront_total_payable:,.2f} €"),
     ]
 
     if plan_type == 'fixed':
-        data_summary.append([Paragraph("Τελικό Ποσό Εξαγοράς στη Λήξη", bold_style), Paragraph(f"{quote.buyout_final_payable:,.2f} € (Έκπτωση -12% & Bonus Εγγύησης)", normal_style)])
+        rows.append(("Τελικό Ποσό Εξαγοράς στη Λήξη", f"{quote.buyout_final_payable:,.2f} € (-12% & Bonus)"))
 
-    table = Table(data_summary, colWidths=[200, 300])
-    table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor("#F8F9F9")),
-        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#BDC3C7")),
-        ('TOPPADDING', (0, 0), (-1, -1), 6),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
-    ]))
-    story.append(table)
-    story.append(Spacer(1, 15))
+    for label, val in rows:
+        pdf.set_fill_color(245, 247, 250)
+        pdf.set_font("DejaVu", "B", 10)
+        pdf.cell(85, 8, f"  {label}", border=1, fill=True)
+        pdf.set_font("DejaVu", "", 10)
+        pdf.cell(95, 8, f"  {val}", border=1, ln=True)
 
+    pdf.ln(8)
+
+    # Add-ons
     if quote.selected_addons:
-        story.append(Paragraph("Επιλεγμένα Add-ons:", bold_style))
+        pdf.set_font("DejaVu", "B", 10)
+        pdf.cell(0, 6, "Επιλεγμένες Καλύψεις / Add-ons:", ln=True)
+        pdf.set_font("DejaVu", "", 9)
         for addon in quote.selected_addons:
-            story.append(Paragraph(f"• {addon}", normal_style))
-        story.append(Spacer(1, 10))
+            pdf.cell(0, 5, f"  • {addon}", ln=True)
+        pdf.ln(6)
 
-    story.append(Paragraph("Περιλαμβάνονται: Πλήρης Συντήρηση, Μικτή Ασφάλεια, Οδική Βοήθεια, Αλλαγή Οχήματος σε βλάβη.", normal_style))
-    doc.build(story)
-    buffer.seek(0)
-    return buffer
+    # Υποσημείωση
+    pdf.set_font("DejaVu", "", 8)
+    pdf.set_text_color(120, 120, 120)
+    pdf.multi_cell(0, 4, "Περιλαμβάνονται: Πλήρης Συντήρηση, Μικτή Ασφάλεια, Οδική Βοήθεια 24/7, Άμεση Αλλαγή Οχήματος σε περίπτωση βλάβης.")
+
+    pdf_output = io.BytesIO()
+    pdf.output(pdf_output)
+    pdf_output.seek(0)
+    return pdf_output
 
 # --- TELEGRAM HANDLERS ---
 
