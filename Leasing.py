@@ -11,13 +11,26 @@ from telegram.ext import (
     ContextTypes,
     filters,
 )
-from fpdf import FPDF
+
+from reportlab.lib.pagesizes import A4
+from reportlab.lib import colors
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 
 TELEGRAM_TOKEN = "8902761856:AAEmSuEs96Bxm2XA-H3vBiyrPU0wNqhPB9g"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-LOCAL_FONT_PATH = os.path.join(BASE_DIR, "font.ttf")
-LOCAL_LOGO_PATH = os.path.join(BASE_DIR, "logo.png")
+
+# Μετατροπή ελληνικών σε συμβατούς χαρακτήρες χωρίς σπασίματα
+def to_clean_text(text: str) -> str:
+    mapping = {
+        'Ά': 'Α', 'Έ': 'Ε', 'Ή': 'Η', 'Ί': 'Ι', 'Ό': 'Ο', 'Ύ': 'Υ', 'Ώ': 'Ω',
+        'ά': 'α', 'έ': 'ε', 'ή': 'η', 'ί': 'ι', 'ό': 'ο', 'ύ': 'υ', 'ώ': 'ω',
+        'ϊ': 'ι', 'ΐ': 'ι', 'ϋ': 'υ', 'ΰ': 'υ'
+    }
+    for k, v in mapping.items():
+        text = text.replace(k, v)
+    return text
 
 # Καταστάσεις διαλόγου
 PRESET_OR_CUSTOM, CUSTOM_PRICE, CUSTOM_YEAR, CUSTOM_ODOMETER, CUSTOM_FUEL, PLAN, DP, DURATION, START_MONTH, KM, ADDONS = range(11)
@@ -145,81 +158,63 @@ def calculate_leasing(
     )
 
 def generate_pdf_quote(quote: LeaseQuote, plan_type: str, months: int) -> io.BytesIO:
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_auto_page_break(auto=True, margin=15)
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36)
+    styles = getSampleStyleSheet()
+    story = []
 
-    # Φόρτωση του font.ttf που ανέβηκε στο αποθετήριο
-    if os.path.exists(LOCAL_FONT_PATH):
-        pdf.add_font("CustomGreek", "", LOCAL_FONT_PATH)
-        font_family = "CustomGreek"
-    else:
-        font_family = "helvetica"
+    title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontName="Helvetica-Bold", fontSize=16, textColor=colors.HexColor("#0D233A"), spaceAfter=5)
+    normal_style = ParagraphStyle('NormalStyle', parent=styles['Normal'], fontName="Helvetica", fontSize=10, textColor=colors.HexColor("#2C3E50"))
+    bold_style = ParagraphStyle('BoldStyle', parent=styles['Normal'], fontName="Helvetica-Bold", fontSize=10, textColor=colors.HexColor("#0D233A"))
 
     # Logo
-    if os.path.exists(LOCAL_LOGO_PATH):
-        try:
-            pdf.image(LOCAL_LOGO_PATH, x=15, y=12, w=55)
-            pdf.ln(20)
-        except Exception:
-            pdf.ln(5)
-    else:
-        pdf.ln(5)
+    logo_files = ["Flex-LeaseB.png", "logo.png", os.path.join(BASE_DIR, "Flex-LeaseB.png"), os.path.join(BASE_DIR, "logo.png")]
+    for lf in logo_files:
+        if os.path.exists(lf):
+            try:
+                logo_img = Image(lf, width=150, height=42)
+                logo_img.hAlign = 'LEFT'
+                story.append(logo_img)
+                story.append(Spacer(1, 10))
+                break
+            except Exception:
+                pass
 
-    # Τίτλος & Ημερομηνία
-    pdf.set_font(font_family, "", 16)
-    pdf.set_text_color(13, 35, 58)
-    pdf.cell(0, 10, "ΕΠΙΣΗΜΗ ΠΡΟΣΦΟΡΑ LEASING", ln=True)
+    story.append(Paragraph("BEEPIT LEASING - OFFICIAL QUOTE", title_style))
+    story.append(Paragraph(f"Date: {datetime.datetime.now().strftime('%d/%m/%Y')}", normal_style))
+    story.append(Spacer(1, 15))
 
-    pdf.set_font(font_family, "", 9)
-    pdf.set_text_color(100, 100, 100)
-    pdf.cell(0, 5, f"Ημερομηνία: {datetime.datetime.now().strftime('%d/%m/%Y')}", ln=True)
-    pdf.ln(8)
-
-    # Πίνακας Προσφοράς
-    rows = [
-        ("Όχημα", str(quote.car_name)),
-        ("Πρόγραμμα", f"{plan_type.upper()} ({months} Μήνες)" if plan_type == 'fixed' else "FLEX (Month-to-Month)"),
-        ("Προκαταβολή", f"{quote.upfront_downpayment:,.2f} €"),
-        ("Μηνιαίο Μίσθωμα (με ΦΠΑ 24%)", f"{quote.monthly_rate_incl_vat:,.2f} €"),
-        ("Μηνιαίο Μίσθωμα (προ ΦΠΑ)", f"{quote.monthly_rate_excl_vat:,.2f} €"),
-        ("Εγγύηση Μισθωμάτων", f"{quote.upfront_guarantee:,.2f} €"),
-        ("ΣΥΝΟΛΟ ΑΡΧΙΚΗΣ ΠΛΗΡΩΜΗΣ", f"{quote.upfront_total_payable:,.2f} €")
+    data_summary = [
+        [Paragraph("Vehicle", bold_style), Paragraph(str(quote.car_name), normal_style)],
+        [Paragraph("Plan Type", bold_style), Paragraph(f"{plan_type.upper()} ({months} Months)" if plan_type == 'fixed' else "FLEX (Month-to-Month)", normal_style)],
+        [Paragraph("Downpayment", bold_style), Paragraph(f"{quote.upfront_downpayment:,.2f} EUR", normal_style)],
+        [Paragraph("Monthly Rate (incl. 24% VAT)", bold_style), Paragraph(f"<b>{quote.monthly_rate_incl_vat:,.2f} EUR</b>", bold_style)],
+        [Paragraph("Monthly Rate (excl. VAT)", bold_style), Paragraph(f"{quote.monthly_rate_excl_vat:,.2f} EUR", normal_style)],
+        [Paragraph("Security Deposit", bold_style), Paragraph(f"{quote.upfront_guarantee:,.2f} EUR", normal_style)],
+        [Paragraph("TOTAL UPFRONT PAYMENT", bold_style), Paragraph(f"<b>{quote.upfront_total_payable:,.2f} EUR</b>", bold_style)],
     ]
 
     if plan_type == 'fixed':
-        rows.append(("Τελικό Ποσό Εξαγοράς στη Λήξη", f"{quote.buyout_final_payable:,.2f} € (-12% & Bonus)"))
+        data_summary.append([Paragraph("Buyout Option at End", bold_style), Paragraph(f"<b>{quote.buyout_final_payable:,.2f} EUR</b> (-12% Discount & Bonus)", normal_style)])
 
-    for i, (label, val) in enumerate(rows):
-        pdf.set_font(font_family, "", 10)
-        pdf.set_text_color(13, 35, 58)
-        if i % 2 == 0:
-            pdf.set_fill_color(245, 247, 250)
-        else:
-            pdf.set_fill_color(255, 255, 255)
-        
-        pdf.cell(85, 9, f"  {label}", border=1, fill=True)
-        pdf.cell(95, 9, f"  {val}", border=1, fill=True, ln=True)
+    table = Table(data_summary, colWidths=[200, 300])
+    table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor("#F8F9F9")),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#BDC3C7")),
+        ('TOPPADDING', (0, 0), (-1, -1), 6),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+    ]))
+    story.append(table)
+    story.append(Spacer(1, 15))
 
-    pdf.ln(8)
-
-    # Add-ons
     if quote.selected_addons:
-        pdf.set_font(font_family, "", 10)
-        pdf.set_text_color(13, 35, 58)
-        pdf.cell(0, 6, "Επιλεγμένα Add-ons:", ln=True)
-        pdf.set_font(font_family, "", 9)
-        pdf.set_text_color(50, 50, 50)
+        story.append(Paragraph("Selected Add-ons:", bold_style))
         for addon in quote.selected_addons:
-            pdf.cell(0, 5, f" • {addon}", ln=True)
-        pdf.ln(4)
+            story.append(Paragraph(f"• {addon}", normal_style))
+        story.append(Spacer(1, 10))
 
-    pdf.set_font(font_family, "", 8)
-    pdf.set_text_color(100, 100, 100)
-    pdf.multi_cell(0, 5, "Περιλαμβάνονται: Πλήρης Συντήρηση & Service, Μικτή Ασφάλεια, Οδική Βοήθεια 24/7, Άμεση Αντικατάσταση Οχήματος σε περίπτωση βλάβης.")
-
-    buffer = io.BytesIO()
-    pdf.output(buffer)
+    story.append(Paragraph("Included: Full Maintenance & Service, Comprehensive Insurance, 24/7 Road Assistance, Vehicle Replacement.", normal_style))
+    doc.build(story)
     buffer.seek(0)
     return buffer
 
@@ -391,11 +386,11 @@ async def get_addons_and_finish(update: Update, context: ContextTypes.DEFAULT_TY
     choice = update.message.text.strip()
     selected_addons = []
     if "Μηδενική Απαλλαγή" in choice:
-        selected_addons.append("Μηδενική Απαλλαγή (+25€)")
+        selected_addons.append("Zero Deductible (+25 EUR)")
     elif "2ος Οδηγός" in choice:
-        selected_addons.append("2ος Οδηγός & Αλλαγή Ελαστικών (+15€)")
+        selected_addons.append("2nd Driver & Tire Replacement (+15 EUR)")
     elif "Όλα" in choice:
-        selected_addons.extend(["Μηδενική Απαλλαγή (+25€)", "2ος Οδηγός & Αλλαγή Ελαστικών (+15€)"])
+        selected_addons.extend(["Zero Deductible (+25 EUR)", "2nd Driver & Tire Replacement (+15 EUR)"])
 
     data = context.user_data
     quote = calculate_leasing(
@@ -443,7 +438,7 @@ async def get_addons_and_finish(update: Update, context: ContextTypes.DEFAULT_TY
     await update.message.reply_document(
         document=pdf_buffer,
         filename=f"Beepit_Quote_{quote.car_name.replace(' ', '_')}.pdf",
-        caption="📄 Η επίσημη προσφορά σας από την beepit."
+        caption="📄 Beepit Official Leasing Quote"
     )
 
     return ConversationHandler.END
@@ -467,7 +462,7 @@ if __name__ == "__main__":
             DP: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_dp)],
             DURATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_duration)],
             START_MONTH: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_start_month)],
-            KM: [MessageHandler(filters.TEXT & ~CLOSES_OR_COMMAND := filters.COMMAND, get_km)],
+            KM: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_km)],
             ADDONS: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_addons_and_finish)],
         },
         fallbacks=[CommandHandler('cancel', cancel)]
