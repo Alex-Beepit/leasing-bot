@@ -1,7 +1,10 @@
 import os
 import io
 import datetime
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from dataclasses import dataclass
+
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import (
     ApplicationBuilder,
@@ -19,6 +22,22 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 
 TELEGRAM_TOKEN = "8902761856:AAEmSuEs96Bxm2XA-H3vBiyrPU0wNqhPB9g"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# Dummy HTTP Server για να ικανοποιεί το Health Check του Render
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain")
+        self.end_headers()
+        self.wfile.write(b"Beepit Leasing Bot is Running!")
+
+    def log_message(self, format, *args):
+        pass
+
+def run_health_server():
+    port = int(os.environ.get("PORT", 10000))
+    server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
+    server.serve_forever()
 
 # Καταστάσεις διαλόγου
 CHOICE_STEP, CUSTOM_PRICE, CUSTOM_YEAR, CUSTOM_ODOMETER, CUSTOM_FUEL, PLAN_STEP, DP_STEP, DURATION_STEP, START_MONTH_STEP, KM_STEP, ADDONS_STEP = range(11)
@@ -221,7 +240,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     choice = update.message.text.strip()
     
-    # Αναζήτηση στα presets
     matched_key = None
     for k in FLEET_PRESETS:
         if k.lower() in choice.lower() or choice.lower() in k.lower():
@@ -445,6 +463,10 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 if __name__ == "__main__":
+    # Εκκίνηση health check server σε ξεχωριστό background thread
+    t = threading.Thread(target=run_health_server, daemon=True)
+    t.start()
+
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
     conv_handler = ConversationHandler(
@@ -466,5 +488,5 @@ if __name__ == "__main__":
     )
 
     app.add_handler(conv_handler)
-    print("🚀 Το Telegram Bot είναι ONLINE!")
+    print("🚀 Το Telegram Bot είναι ONLINE & Live στο Render!")
     app.run_polling()
