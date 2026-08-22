@@ -1,6 +1,7 @@
 import os
 import io
 import datetime
+import urllib.request
 from dataclasses import dataclass
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import (
@@ -12,13 +13,34 @@ from telegram.ext import (
     filters,
 )
 
-# ReportLab για PDF
+# ReportLab για PDF & Unicode Fonts
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 
 TELEGRAM_TOKEN = "8902761856:AAEmSuEs96Bxm2XA-H3vBiyrPU0wNqhPB9g"
+
+# Εγγραφή Unicode γραμματοσειράς για πλήρη υποστήριξη Ελληνικών
+FONT_URL = "https://raw.githubusercontent.com/google/fonts/main/ofl/notosans/NotoSans-Regular.ttf"
+FONT_BOLD_URL = "https://raw.githubusercontent.com/google/fonts/main/ofl/notosans/NotoSans-Bold.ttf"
+FONT_PATH = "/tmp/NotoSans-Regular.ttf"
+FONT_BOLD_PATH = "/tmp/NotoSans-Bold.ttf"
+
+def setup_greek_fonts():
+    try:
+        if not os.path.exists(FONT_PATH):
+            urllib.request.urlretrieve(FONT_URL, FONT_PATH)
+        if not os.path.exists(FONT_BOLD_PATH):
+            urllib.request.urlretrieve(FONT_BOLD_URL, FONT_BOLD_PATH)
+        pdfmetrics.registerFont(TTFont('NotoSans', FONT_PATH))
+        pdfmetrics.registerFont(TTFont('NotoSans-Bold', FONT_BOLD_PATH))
+    except Exception as e:
+        print(f"Font download error: {e}")
+
+setup_greek_fonts()
 
 # Καταστάσεις διαλόγου
 PRESET_OR_CUSTOM, CUSTOM_PRICE, CUSTOM_YEAR, CUSTOM_ODOMETER, CUSTOM_FUEL, PLAN, DP, DURATION, START_MONTH, KM, ADDONS = range(11)
@@ -110,7 +132,7 @@ def calculate_leasing(
     else:
         monthly_rate_excl_vat = total_cost_excl_vat / effective_months
 
-    # Προσθήκη Add-ons (μετατροπή σε ποσό προ ΦΠΑ)
+    # Προσθήκη Add-ons
     addons_monthly_total = 0.0
     if "Μηδενική Απαλλαγή (+25€)" in selected_addons:
         addons_monthly_total += 25.0
@@ -153,11 +175,22 @@ def generate_pdf_quote(quote: LeaseQuote, plan_type: str, months: int) -> io.Byt
     styles = getSampleStyleSheet()
     story = []
 
-    title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontSize=20, textColor=colors.HexColor("#1B4F72"), spaceAfter=10)
-    normal_style = ParagraphStyle('NormalStyle', parent=styles['Normal'], fontSize=10, textColor=colors.HexColor("#2C3E50"))
-    bold_style = ParagraphStyle('BoldStyle', parent=styles['Normal'], fontSize=11, fontName="Helvetica-Bold", textColor=colors.HexColor("#1B4F72"))
+    font_name = 'NotoSans' if os.path.exists(FONT_PATH) else 'Helvetica'
+    font_bold = 'NotoSans-Bold' if os.path.exists(FONT_BOLD_PATH) else 'Helvetica-Bold'
 
-    story.append(Paragraph("BEEPIT LEASING - ΕΠΙΣΗΜΗ ΠΡΟΣΦΟΡΑ", title_style))
+    title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontName=font_bold, fontSize=16, textColor=colors.HexColor("#0D233A"), spaceAfter=5)
+    normal_style = ParagraphStyle('NormalStyle', parent=styles['Normal'], fontName=font_name, fontSize=10, textColor=colors.HexColor("#2C3E50"))
+    bold_style = ParagraphStyle('BoldStyle', parent=styles['Normal'], fontName=font_bold, fontSize=10, textColor=colors.HexColor("#0D233A"))
+
+    # Προσθήκη Logo
+    logo_path = "logo.png"
+    if os.path.exists(logo_path):
+        logo_img = Image(logo_path, width=160, height=45)
+        logo_img.hAlign = 'LEFT'
+        story.append(logo_img)
+        story.append(Spacer(1, 10))
+
+    story.append(Paragraph("ΕΠΙΣΗΜΗ ΠΡΟΣΦΟΡΑ LEASING", title_style))
     story.append(Paragraph(f"Ημερομηνία: {datetime.datetime.now().strftime('%d/%m/%Y')}", normal_style))
     story.append(Spacer(1, 15))
 
@@ -165,14 +198,14 @@ def generate_pdf_quote(quote: LeaseQuote, plan_type: str, months: int) -> io.Byt
         [Paragraph("Όχημα", bold_style), Paragraph(str(quote.car_name), normal_style)],
         [Paragraph("Πρόγραμμα", bold_style), Paragraph(f"{plan_type.upper()} ({months} Μήνες)" if plan_type == 'fixed' else "FLEX (Month-to-Month)", normal_style)],
         [Paragraph("Προκαταβολή", bold_style), Paragraph(f"{quote.upfront_downpayment:,.2f} €", normal_style)],
-        [Paragraph("Μηνιαίο Μίσθωμα (με ΦΠΑ)", bold_style), Paragraph(f"<b>{quote.monthly_rate_incl_vat:,.2f} €</b>", normal_style)],
+        [Paragraph("Μηνιαίο Μίσθωμα (με ΦΠΑ)", bold_style), Paragraph(f"{quote.monthly_rate_incl_vat:,.2f} €", bold_style)],
         [Paragraph("Μηνιαίο Μίσθωμα (προ ΦΠΑ)", bold_style), Paragraph(f"{quote.monthly_rate_excl_vat:,.2f} €", normal_style)],
         [Paragraph("Εγγύηση Μισθωμάτων", bold_style), Paragraph(f"{quote.upfront_guarantee:,.2f} €", normal_style)],
-        [Paragraph("Σύνολο Αρχικής Πληρωμής", bold_style), Paragraph(f"<b>{quote.upfront_total_payable:,.2f} €</b>", normal_style)],
+        [Paragraph("Σύνολο Αρχικής Πληρωμής", bold_style), Paragraph(f"{quote.upfront_total_payable:,.2f} €", bold_style)],
     ]
 
     if plan_type == 'fixed':
-        data_summary.append([Paragraph("Τελικό Ποσό Εξαγοράς στη Λήξη", bold_style), Paragraph(f"<b>{quote.buyout_final_payable:,.2f} €</b> (Έκπτωση -12% & Bonus Εγγύησης)", normal_style)])
+        data_summary.append([Paragraph("Τελικό Ποσό Εξαγοράς στη Λήξη", bold_style), Paragraph(f"{quote.buyout_final_payable:,.2f} € (Έκπτωση -12% & Bonus Εγγύησης)", normal_style)])
 
     table = Table(data_summary, colWidths=[200, 300])
     table.setStyle(TableStyle([
@@ -182,13 +215,13 @@ def generate_pdf_quote(quote: LeaseQuote, plan_type: str, months: int) -> io.Byt
         ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
     ]))
     story.append(table)
-    story.append(Spacer(1, 20))
+    story.append(Spacer(1, 15))
 
     if quote.selected_addons:
         story.append(Paragraph("Επιλεγμένα Add-ons:", bold_style))
         for addon in quote.selected_addons:
             story.append(Paragraph(f"• {addon}", normal_style))
-        story.append(Spacer(1, 15))
+        story.append(Spacer(1, 10))
 
     story.append(Paragraph("Περιλαμβάνονται: Πλήρης Συντήρηση, Μικτή Ασφάλεια, Οδική Βοήθεια, Αλλαγή Οχήματος σε βλάβη.", normal_style))
     doc.build(story)
@@ -346,7 +379,6 @@ async def get_km(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         context.user_data['annual_km'] = km_val
 
-    # Επιλογή Add-ons (Βήμα 4)
     reply_keyboard = [
         ["Χωρίς Add-ons"],
         ["Μηδενική Απαλλαγή (+25€)"],
@@ -412,7 +444,6 @@ async def get_addons_and_finish(update: Update, context: ContextTypes.DEFAULT_TY
 
     await update.message.reply_text(result, reply_markup=ReplyKeyboardRemove(), parse_mode="Markdown")
 
-    # Αποστολή PDF
     pdf_buffer = generate_pdf_quote(quote, data['plan'], data.get('months', 12))
     await update.message.reply_document(
         document=pdf_buffer,
