@@ -18,17 +18,16 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 
 TELEGRAM_TOKEN = "8902761856:AAEmSuEs96Bxm2XA-H3vBiyrPU0wNqhPB9g"
-
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # Καταστάσεις διαλόγου
 PRESET_OR_CUSTOM, CUSTOM_PRICE, CUSTOM_YEAR, CUSTOM_ODOMETER, CUSTOM_FUEL, PLAN, DP, DURATION, START_MONTH, KM, ADDONS = range(11)
 
 FLEET_PRESETS = {
-    "🚗 Fiat 500 Hybrid (2022)": {"name": "Fiat 500 Hybrid", "price": 14500, "year": 2022, "odometer": 35000, "fuel": "hybrid"},
-    "🚙 Peugeot 208 Diesel (2021)": {"name": "Peugeot 208 Diesel", "price": 16800, "year": 2021, "odometer": 52000, "fuel": "diesel"},
-    "⚡ Peugeot e-2008 EV (2022)": {"name": "Peugeot e-2008 Electric", "price": 24500, "year": 2022, "odometer": 28000, "fuel": "electric"},
-    "🚘 Nissan Qashqai (2021)": {"name": "Nissan Qashqai 1.3T", "price": 21500, "year": 2021, "odometer": 45000, "fuel": "gasoline"},
+    "🚗 Fiat 500 Hybrid (2022)": {"name": "Fiat 500 Hybrid", "price": 14500.0, "year": 2022, "odometer": 35000, "fuel": "hybrid"},
+    "🚙 Peugeot 208 Diesel (2021)": {"name": "Peugeot 208 Diesel", "price": 16800.0, "year": 2021, "odometer": 52000, "fuel": "diesel"},
+    "⚡ Peugeot e-2008 EV (2022)": {"name": "Peugeot e-2008 Electric", "price": 24500.0, "year": 2022, "odometer": 28000, "fuel": "electric"},
+    "🚘 Nissan Qashqai (2021)": {"name": "Nissan Qashqai 1.3T", "price": 21500.0, "year": 2021, "odometer": 45000, "fuel": "gasoline"},
 }
 
 @dataclass
@@ -111,9 +110,9 @@ def calculate_leasing(
         monthly_rate_excl_vat = total_cost_excl_vat / effective_months
 
     addons_monthly_total = 0.0
-    if "Μηδενική Απαλλαγή (+25€)" in selected_addons:
+    if "Μηδενική Απαλλαγή (+25€)" in selected_addons or "Zero Deductible (+25 EUR)" in selected_addons:
         addons_monthly_total += 25.0
-    if "2ος Οδηγός & Αλλαγή Ελαστικών (+15€)" in selected_addons:
+    if "2ος Οδηγός & Αλλαγή Ελαστικών (+15€)" in selected_addons or "2nd Driver & Tire Replacement (+15 EUR)" in selected_addons:
         addons_monthly_total += 15.0
 
     addons_excl_vat = addons_monthly_total / (1 + vat_rate)
@@ -209,6 +208,7 @@ def generate_pdf_quote(quote: LeaseQuote, plan_type: str, months: int) -> io.Byt
 # --- TELEGRAM HANDLERS ---
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data.clear()
     reply_keyboard = [[k] for k in FLEET_PRESETS.keys()] + [["🔧 Χειροκίνητη Εισαγωγή Αυτοκινήτου"]]
     await update.message.reply_text(
         "🚗 **Καλωσήρθατε στο beepit Leasing!**\n\n"
@@ -288,7 +288,8 @@ async def get_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     plan = update.message.text.strip().lower()
     context.user_data['plan'] = plan
     
-    if plan == "fixed":
+    if "fixed" in plan:
+        context.user_data['plan'] = "fixed"
         reply_keyboard = [["0%", "10%", "20%"]]
         await update.message.reply_text(
             "Επίλεξε **ποσοστό προκαταβολής**:",
@@ -297,6 +298,7 @@ async def get_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return DP
     else:
+        context.user_data['plan'] = "flex"
         context.user_data['downpayment_pct'] = 0.0
         context.user_data['months'] = 12
         reply_keyboard = [
