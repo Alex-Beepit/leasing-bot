@@ -1,10 +1,15 @@
 import os
 import io
+import re
+import time
 import datetime
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from dataclasses import dataclass
 from PIL import Image as PILImage
+
+import cloudscraper
+from bs4 import BeautifulSoup
 
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import (
@@ -18,13 +23,14 @@ from telegram.ext import (
 
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image, HRFlowable
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 
 TELEGRAM_TOKEN = "8902761856:AAEmSuEs96Bxm2XA-H3vBiyrPU0wNqhPB9g"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+CAR_GR_URL = "https://leonessa-cars.car.gr/cars/"
 
-# Dummy HTTP Server για το Health Check του Render
+# --- DUMMY HTTP SERVER ΓΙΑ RENDER HEALTH CHECK ---
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -40,15 +46,78 @@ def run_health_server():
     server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
     server.serve_forever()
 
+# --- CAR.GR LIVE SCRAPER ---
+CACHED_FLEET = {}
+LAST_FETCH_TIME = 0
+
+def fetch_leonessa_cars(force_refresh=False):
+    global CACHED_FLEET, LAST_FETCH_TIME
+    current_time = time.time()
+    
+    if CACHED_FLEET and (current_time - LAST_FETCH_TIME < 900) and not force_refresh:
+        return CACHED_FLEET
+
+    try:
+        scraper = cloudscraper.create_scraper(browser={'browser': 'chrome', 'platform': 'windows', 'desktop': True})
+        response = scraper.get(CAR_GR_URL, timeout=15)
+        if response.status_code == 200:
+            soup = BeautifulSoup(response.text, 'html.parser')
+            cars = {}
+            items = soup.find_all(['div', 'a', 'article'], class_=lambda c: c and ('vehicle' in c or 'classified' in c or 'item' in c or 'card' in c))
+            if not items:
+                items = soup.select('a[href*="/cars/view/"]')
+
+            for item in items:
+                title_elem = item.find(['h2', 'h3', 'h4', 'span'], class_=lambda c: c and ('title' in c or 'header' in c or 'name' in c))
+                if not title_elem:
+                    title_elem = item.find('h2') or item.find('h3')
+                
+                price_elem = item.find(['span', 'div', 'p'], class_=lambda c: c and 'price' in c)
+                full_text = item.get_text(" ", strip=True)
+                if not full_text:
+                    continue
+
+                title = title_elem.get_text(strip=True) if title_elem else ""
+                if not title:
+                    match = re.search(r'([A-Za-zΑ-Ωα-ω0-9\s\.\-]{5,35})\s+\'?(201[5-9]|202[0-6])', full_text)
+                    if match:
+                        title = match.group(1).strip()
+
+                if len(title) < 3:
+                    continue
+
+                price = 15000.0
+                if price_elem:
+                    clean_p = re.sub(r'[^\d]', '', price_elem.get_text())
+                    if clean_p:
+                        price = float(clean_p)
+
+                year_match = re.search(r'\b(201[5-9]|202[0-6])\b', full_text)
+                year = int(year_match.group(1)) if year_match else 2021
+
+                km_match = re.search(r'(\d{1,3}(?:\.\d{3})*|\d+)\s*(?:χλμ|km)', full_text, re.IGNORECASE)
+                odometer = int(km_match.group(1).replace('.', '')) if km_match else 45000
+
+                lower_text = full_text.lower()
+                fuel = "gasoline"
+                if "diesel" in lower_text or "πετρέλαιο" in lower_text: fuel = "diesel"
+                elif "hybrid" in lower_text or "υβριδικό" in lower_text: fuel = "hybrid"
+                elif "electric" in lower_text or "ηλεκτρικό" in lower_text or " ev " in lower_text: fuel = "electric"
+
+                key = f"{title[:25]} ({year}) - {price:,.0f}€"
+                cars[key] = {"name": title[:35], "price": price, "year": year, "odometer": odometer, "fuel": fuel}
+
+            if cars:
+                CACHED_FLEET = cars
+                LAST_FETCH_TIME = current_time
+                return CACHED_FLEET
+    except Exception as e:
+        print(f"Scraping error: {e}")
+
+    return CACHED_FLEET
+
 # Καταστάσεις διαλόγου
 CHOICE_STEP, CUSTOM_PRICE, CUSTOM_YEAR, CUSTOM_ODOMETER, CUSTOM_FUEL, PLAN_STEP, DP_STEP, DURATION_STEP, START_MONTH_STEP, KM_STEP, ADDONS_STEP = range(11)
-
-FLEET_PRESETS = {
-    "Fiat 500 Hybrid (2022)": {"name": "Fiat 500 Hybrid", "price": 14500.0, "year": 2022, "odometer": 35000, "fuel": "hybrid"},
-    "Peugeot 208 Diesel (2021)": {"name": "Peugeot 208 Diesel", "price": 16800.0, "year": 2021, "odometer": 52000, "fuel": "diesel"},
-    "Peugeot e-2008 EV (2022)": {"name": "Peugeot e-2008 Electric", "price": 24500.0, "year": 2022, "odometer": 28000, "fuel": "electric"},
-    "Nissan Qashqai (2021)": {"name": "Nissan Qashqai 1.3T", "price": 21500.0, "year": 2021, "odometer": 45000, "fuel": "gasoline"},
-}
 
 @dataclass
 class LeaseQuote:
@@ -62,6 +131,7 @@ class LeaseQuote:
     buyout_final_payable: float
     addons_cost: float
     selected_addons: list
+    annual_km: int
 
 def calculate_leasing(
     car_name: str,
@@ -162,73 +232,107 @@ def calculate_leasing(
         buyout_nominal_incl_vat=round(buyout_nominal_incl_vat, 2),
         buyout_final_payable=round(buyout_final_payable, 2),
         addons_cost=addons_monthly_total,
-        selected_addons=selected_addons
+        selected_addons=selected_addons,
+        annual_km=annual_km
     )
 
 def generate_pdf_quote(quote: LeaseQuote, plan_type: str, months: int) -> io.BytesIO:
     buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36)
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        rightMargin=30,
+        leftMargin=30,
+        topMargin=25,
+        bottomMargin=25
+    )
     styles = getSampleStyleSheet()
     story = []
 
-    title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontName="Helvetica-Bold", fontSize=16, textColor=colors.HexColor("#0D233A"), spaceAfter=5)
-    normal_style = ParagraphStyle('NormalStyle', parent=styles['Normal'], fontName="Helvetica", fontSize=10, textColor=colors.HexColor("#2C3E50"))
-    bold_style = ParagraphStyle('BoldStyle', parent=styles['Normal'], fontName="Helvetica-Bold", fontSize=10, textColor=colors.HexColor("#0D233A"))
+    # Τυπογραφικά στυλ
+    title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontName="Helvetica-Bold", fontSize=15, textColor=colors.HexColor("#0D233A"), spaceAfter=2)
+    meta_style = ParagraphStyle('MetaStyle', parent=styles['Normal'], fontName="Helvetica", fontSize=8.5, textColor=colors.HexColor("#7F8C8D"), spaceAfter=8)
+    normal_style = ParagraphStyle('NormalStyle', parent=styles['Normal'], fontName="Helvetica", fontSize=8.5, textColor=colors.HexColor("#2C3E50"))
+    bold_style = ParagraphStyle('BoldStyle', parent=styles['Normal'], fontName="Helvetica-Bold", fontSize=8.5, textColor=colors.HexColor("#0D233A"))
+    h2_style = ParagraphStyle('H2Style', parent=styles['Heading2'], fontName="Helvetica-Bold", fontSize=9.5, textColor=colors.HexColor("#0D233A"), spaceBefore=6, spaceAfter=3)
+    fine_print = ParagraphStyle('FinePrint', parent=styles['Normal'], fontName="Helvetica", fontSize=6.5, leading=8, textColor=colors.HexColor("#7F8C8D"))
 
-    # Εισαγωγή Logo με αυτόματη διατήρηση αναλογιών (Aspect Ratio)
+    # Λογότυπο με διατήρηση αναλογιών
     logo_files = ["Flex-LeaseB.png", "logo.png", os.path.join(BASE_DIR, "Flex-LeaseB.png"), os.path.join(BASE_DIR, "logo.png")]
     for lf in logo_files:
         if os.path.exists(lf):
             try:
                 with PILImage.open(lf) as img_temp:
                     orig_w, orig_h = img_temp.size
-                
-                # Ορίζουμε το επιθυμητό πλάτος και υπολογίζουμε ισομετρικά το ύψος
-                target_w = 145.0
+                target_w = 130.0
                 target_h = target_w * (orig_h / orig_w)
-                
                 logo_img = Image(lf, width=target_w, height=target_h)
                 logo_img.hAlign = 'LEFT'
                 story.append(logo_img)
-                story.append(Spacer(1, 12))
+                story.append(Spacer(1, 4))
                 break
             except Exception:
                 pass
 
-    story.append(Paragraph("BEEPIT LEASING - OFFICIAL QUOTE", title_style))
-    story.append(Paragraph(f"Date: {datetime.datetime.now().strftime('%d/%m/%Y')}", normal_style))
-    story.append(Spacer(1, 15))
+    story.append(Paragraph("BEEPIT LEASING & SUBSCRIPTION SERVICES", title_style))
+    story.append(Paragraph(f"Επίσημη Προσφορά Μίσθωσης | Ημερομηνία: {datetime.datetime.now().strftime('%d/%m/%Y')} | Ref: BPT-{int(time.time())%100000}", meta_style))
+    story.append(Spacer(1, 4))
 
+    # Πίνακας Οικονομικής Προσφοράς
     data_summary = [
-        [Paragraph("Vehicle", bold_style), Paragraph(str(quote.car_name), normal_style)],
-        [Paragraph("Plan Type", bold_style), Paragraph(f"CLASSIC ({months} Months)" if plan_type == 'classic' else "FLEX (Month-to-Month)", normal_style)],
-        [Paragraph("Downpayment", bold_style), Paragraph(f"{quote.upfront_downpayment:,.2f} EUR", normal_style)],
-        [Paragraph("Monthly Rate (incl. 24% VAT)", bold_style), Paragraph(f"<b>{quote.monthly_rate_incl_vat:,.2f} EUR</b>", bold_style)],
-        [Paragraph("Monthly Rate (excl. VAT)", bold_style), Paragraph(f"{quote.monthly_rate_excl_vat:,.2f} EUR", normal_style)],
-        [Paragraph("Security Deposit", bold_style), Paragraph(f"{quote.upfront_guarantee:,.2f} EUR", normal_style)],
-        [Paragraph("TOTAL UPFRONT PAYMENT", bold_style), Paragraph(f"<b>{quote.upfront_total_payable:,.2f} EUR</b>", bold_style)],
+        [Paragraph("Όχημα Προσφοράς", bold_style), Paragraph(str(quote.car_name), normal_style)],
+        [Paragraph("Πρόγραμμα Μίσθωσης", bold_style), Paragraph(f"<b>CLASSIC LEASING ({months} Μήνες)</b>" if plan_type == 'classic' else "<b>FLEX LEASING (Μηνιαία Συνδρομή / Ευέλικτο)</b>", normal_style)],
+        [Paragraph("Ετήσιο Όριο Χιλιομέτρων", bold_style), Paragraph(f"{quote.annual_km:,} χλμ / έτος", normal_style)],
+        [Paragraph("Προκαταβολή", bold_style), Paragraph(f"{quote.upfront_downpayment:,.2f} €", normal_style)],
+        [Paragraph("Μηνιαίο Μίσθωμα (με ΦΠΑ 24%)", bold_style), Paragraph(f"<b>{quote.monthly_rate_incl_vat:,.2f} € / μήνα</b>", bold_style)],
+        [Paragraph("Μηνιαίο Μίσθωμα (καθαρό / άνευ ΦΠΑ)", bold_style), Paragraph(f"{quote.monthly_rate_excl_vat:,.2f} € / μήνα", normal_style)],
+        [Paragraph("Εγγύηση Μισθωμάτων", bold_style), Paragraph(f"{quote.upfront_guarantee:,.2f} € (2 μισθώματα)" if plan_type == 'classic' else "0,00 € (Μηδενική)", normal_style)],
+        [Paragraph("ΣΥΝΟΛΙΚΟ ΑΡΧΙΚΟ ΠΟΣΟ ΠΛΗΡΩΜΗΣ", bold_style), Paragraph(f"<b>{quote.upfront_total_payable:,.2f} €</b>", bold_style)],
     ]
 
     if plan_type == 'classic':
-        data_summary.append([Paragraph("Buyout Option at End", bold_style), Paragraph(f"<b>{quote.buyout_final_payable:,.2f} EUR</b> (-12% Discount & Bonus)", normal_style)])
+        data_summary.append([
+            Paragraph("Δικαίωμα Εξαγοράς στη Λήξη (Buyout)", bold_style),
+            Paragraph(f"<b>{quote.buyout_final_payable:,.2f} €</b> <i>(Περιλαμβάνει -12% έκπτωση & Bonus 2x Εγγύησης)</i>", normal_style)
+        ])
 
-    table = Table(data_summary, colWidths=[200, 300])
+    table = Table(data_summary, colWidths=[190, 345])
     table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor("#F8F9F9")),
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#EAEDED")),
+        ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor("#F8F9F9")),
         ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#BDC3C7")),
-        ('TOPPADDING', (0, 0), (-1, -1), 6),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+        ('TOPPADDING', (0, 0), (-1, -1), 3.5),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 3.5),
     ]))
     story.append(table)
-    story.append(Spacer(1, 15))
+    story.append(Spacer(1, 6))
 
+    # Πρόσθετες Επιλογές (Add-ons)
     if quote.selected_addons:
-        story.append(Paragraph("Selected Add-ons:", bold_style))
+        story.append(Paragraph("Επιλεγμένες Πρόσθετες Καλύψεις (Add-ons):", h2_style))
         for addon in quote.selected_addons:
             story.append(Paragraph(f"• {addon}", normal_style))
-        story.append(Spacer(1, 10))
+        story.append(Spacer(1, 4))
 
-    story.append(Paragraph("Included: Full Maintenance & Service, Comprehensive Insurance, 24/7 Road Assistance, Vehicle Replacement.", normal_style))
+    # Παροχές
+    story.append(Paragraph("Βασικές Παροχές που Συμπεριλαμβάνονται στο Μίσθωμα:", h2_style))
+    story.append(Paragraph("✔ Πλήρης Μηχανική Συντήρηση & Τακτικά Service | ✔ Μικτή Ασφάλεια με Αστική Ευθύνη & Κλοπή/Πυρκαγιά | ✔ Τέλη Κυκλοφορίας | ✔ 24/7 Οδική Βοήθεια Πανελλαδικά | ✔ Όχημα Αντικατάστασης σε περίπτωση βλάβης.", normal_style))
+    story.append(Spacer(1, 6))
+
+    story.append(HRFlowable(width="100%", thickness=0.5, color=colors.HexColor("#BDC3C7"), spaceBefore=2, spaceAfter=4))
+
+    # Νομικοί Όροι & Πολιτική (Fine Print / Μικρά Γράμματα)
+    story.append(Paragraph("ΓΕΝΙΚΟΙ ΟΡΟΙ, ΠΡΟΫΠΟΘΕΣΕΙΣ & ΕΜΠΟΡΙΚΗ ΠΟΛΙΤΙΚΗ ΜΙΣΘΩΣΕΩΝ BEEPIT", h2_style))
+    fine_text = (
+        "<b>1. Οικονομικοί Όροι & Πληρωμές:</b> Τα μισθώματα προκαταβάλλονται στην αρχή κάθε μισθωτικής περιόδου. Στο πρόγραμμα Classic, η εγγύηση (2 μισθώματα) επιστρέφεται άτοκα στη λήξη εφόσον το όχημα παραδοθεί σε καλή κατάσταση, ή συμψηφίζεται διπλασιασμένη σε περίπτωση άσκησης του δικαιώματος εξαγοράς. Στο πρόγραμμα Flex δεν απαιτείται εγγύηση ούτε τέλος εγγραφής.<br/>"
+        "<b>2. Δικαίωμα Εξαγοράς (Lease-to-Own):</b> Ισχύει αποκλειστικά για το πρόγραμμα Classic. Ο μισθωτής δικαιούται να αποκτήσει την κυριότητα του οχήματος στη λήξη καταβάλλοντας το τελικό ποσό εξαγοράς, το οποίο υπολογίζεται βάσει της υπολειμματικής αξίας μείον 12% εμπορική έκπτωση και μείον το διπλάσιο της καταβληθείσας εγγύησης (Bonus 100%).<br/>"
+        "<b>3. Όρια Χιλιομέτρων & Υπέρβαση:</b> Η προσφορά ισχύει για το αναγραφόμενο ετήσιο όριο χιλιομέτρων. Σε περίπτωση υπέρβασης κατά την τελική εκκαθάριση, ισχύει χρέωση 0,10 € / επιπλέον χιλιόμετρο (πλέον ΦΠΑ 24%).<br/>"
+        "<b>4. Ασφάλιση & Απαλλαγή Ευθύνης:</b> Το όχημα καλύπτεται από μικτή ασφάλιση με βασικό ποσό απαλλαγής. Σε περίπτωση επιλογής της κάλυψης 'Zero Deductible', η απαλλαγή μηδενίζεται (εξαιρούνται παραβάσεις ΚΟΚ, οδήγηση υπό την επήρεια ουσιών ή χρήση εκτός ασφαλτοστρωμένου οδοστρώματος).<br/>"
+        "<b>5. Πρόωρη Λύση Σύμβασης:</b> Στο πρόγραμμα Flex η μίσθωση διακόπτεται ελεύθερα με ειδοποίηση 5 εργάσιμων ημερών προ της έναρξης του επόμενου μήνα. Στο πρόγραμμα Classic, σε περίπτωση πρόωρης καταγγελίας εκ μέρους του μισθωτή, παρακρατείται η εγγύηση και επιβάλλεται αποζημίωση ίση με το 50% των υπολειπόμενων μισθωμάτων.<br/>"
+        "<b>6. Εγκυρότητα Προσφοράς:</b> Η παρούσα προσφορά ισχύει για 15 ημέρες από την έκδοσή της και τελεί υπό την προϋπόθεση οικονομικής έγκρισης και διαθεσιμότητας του οχήματος."
+    )
+    story.append(Paragraph(fine_text, fine_print))
+
     doc.build(story)
     buffer.seek(0)
     return buffer
@@ -237,11 +341,18 @@ def generate_pdf_quote(quote: LeaseQuote, plan_type: str, months: int) -> io.Byt
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
-    reply_keyboard = [[k] for k in FLEET_PRESETS.keys()] + [["Αλλο Αυτοκινητο (Χειροκινητα)"]]
+    fleet = fetch_leonessa_cars()
+    
+    fleet_buttons = []
+    if fleet:
+        fleet_buttons = [[k] for k in list(fleet.keys())[:10]]
+    
+    fleet_buttons.append(["🔄 Ανανέωση Στόλου (Car.gr)", "Αλλο Αυτοκινητο (Χειροκινητα)"])
+    
     await update.message.reply_text(
         "🚗 **Καλωσήρθατε στο beepit Leasing!**\n\n"
-        "Επιλέξτε ένα όχημα από τον στόλο μας ή εισάγετε τα δικά σας στοιχεία:",
-        reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True),
+        "Επιλέξτε ένα από τα **διαθέσιμα αυτοκίνητα της έκθεσης Leonessa Cars (Live Car.gr)** ή εισάγετε τα δικά σας στοιχεία:",
+        reply_markup=ReplyKeyboardMarkup(fleet_buttons, one_time_keyboard=True, resize_keyboard=True),
         parse_mode="Markdown"
     )
     return CHOICE_STEP
@@ -249,14 +360,20 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     choice = update.message.text.strip()
     
+    if "Ανανέωση" in choice:
+        await update.message.reply_text("🔄 Γίνεται συγχρονισμός με το Car.gr...")
+        fetch_leonessa_cars(force_refresh=True)
+        return await start(update, context)
+
+    fleet = fetch_leonessa_cars()
     matched_key = None
-    for k in FLEET_PRESETS:
+    for k in fleet:
         if k.lower() in choice.lower() or choice.lower() in k.lower():
             matched_key = k
             break
 
     if matched_key:
-        data = FLEET_PRESETS[matched_key]
+        data = fleet[matched_key]
         context.user_data['car_name'] = data['name']
         context.user_data['price'] = data['price']
         context.user_data['year'] = data['year']
@@ -265,7 +382,9 @@ async def handle_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         reply_keyboard = [["Classic", "Flex"]]
         await update.message.reply_text(
-            f"✅ Επιλέξατε: **{data['name']}**\n\nΕπιλέξτε **πρόγραμμα μίσθωσης**:",
+            f"✅ Επιλέξατε από Car.gr:\n**{data['name']}**\n"
+            f"• Αξία: {data['price']:,.0f} € | Έτος: {data['year']} | Χλμ: {data['odometer']:,}\n\n"
+            f"Επιλέξτε **πρόγραμμα μίσθωσης**:",
             reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True),
             parse_mode="Markdown"
         )
@@ -452,7 +571,7 @@ async def get_addons_and_finish(update: Update, context: ContextTypes.DEFAULT_TY
         f"💳 **ΣΥΝΟΛΙΚΟ ΑΡΧΙΚΟ ΠΟΣΟ ΠΛΗΡΩΜΗΣ:** `{quote.upfront_total_payable:,.2f} €`\n"
         f"{buyout_section}"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "📄 *Σας αποστέλλεται η επίσημη προσφορά σε PDF...*"
+        "📄 *Σας αποστέλλεται η επίσημη προσφορά σε PDF με τους πλήρεις όρους & καλύψεις...*"
     )
 
     await update.message.reply_text(result, reply_markup=ReplyKeyboardRemove(), parse_mode="Markdown")
@@ -461,7 +580,7 @@ async def get_addons_and_finish(update: Update, context: ContextTypes.DEFAULT_TY
     await update.message.reply_document(
         document=pdf_buffer,
         filename=f"Beepit_Quote_{quote.car_name.replace(' ', '_')}.pdf",
-        caption="📄 Beepit Official Leasing Quote"
+        caption="📄 Beepit Official Leasing Quote & Terms"
     )
 
     return ConversationHandler.END
@@ -495,5 +614,5 @@ if __name__ == "__main__":
     )
 
     app.add_handler(conv_handler)
-    print("🚀 Το Telegram Bot είναι ONLINE!")
+    print("🚀 Το Telegram Bot είναι ONLINE με Εμπλουτισμένο PDF & Όρους!")
     app.run_polling()
