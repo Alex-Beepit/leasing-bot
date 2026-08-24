@@ -23,7 +23,7 @@ from telegram.ext import (
 
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image, HRFlowable
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 
 TELEGRAM_TOKEN = "8902761856:AAEmSuEs96Bxm2XA-H3vBiyrPU0wNqhPB9g"
@@ -238,6 +238,7 @@ def calculate_leasing(
 
 def generate_pdf_quote(quote: LeaseQuote, plan_type: str, months: int) -> io.BytesIO:
     buffer = io.BytesIO()
+    # Μειώνουμε τα περιθώρια για να χωράνε περισσότερα στη σελίδα
     doc = SimpleDocTemplate(
         buffer,
         pagesize=A4,
@@ -255,7 +256,10 @@ def generate_pdf_quote(quote: LeaseQuote, plan_type: str, months: int) -> io.Byt
     normal_style = ParagraphStyle('NormalStyle', parent=styles['Normal'], fontName="Helvetica", fontSize=8.5, textColor=colors.HexColor("#2C3E50"))
     bold_style = ParagraphStyle('BoldStyle', parent=styles['Normal'], fontName="Helvetica-Bold", fontSize=8.5, textColor=colors.HexColor("#0D233A"))
     h2_style = ParagraphStyle('H2Style', parent=styles['Heading2'], fontName="Helvetica-Bold", fontSize=9.5, textColor=colors.HexColor("#0D233A"), spaceBefore=6, spaceAfter=3)
-    fine_print = ParagraphStyle('FinePrint', parent=styles['Normal'], fontName="Helvetica", fontSize=6.5, leading=8, textColor=colors.HexColor("#7F8C8D"))
+    
+    # Στυλ για τα «ψιλά γράμματα» των 13 όρων
+    fine_print_title = ParagraphStyle('FinePrintTitle', parent=styles['Normal'], fontName="Helvetica-Bold", fontSize=7, textColor=colors.HexColor("#2C3E50"), spaceBefore=4, spaceAfter=2)
+    fine_print = ParagraphStyle('FinePrint', parent=styles['Normal'], fontName="Helvetica", fontSize=6, leading=7, textColor=colors.HexColor("#7F8C8D"), alignment=4)
 
     # Λογότυπο με διατήρηση αναλογιών
     logo_files = ["Flex-LeaseB.png", "logo.png", os.path.join(BASE_DIR, "Flex-LeaseB.png"), os.path.join(BASE_DIR, "logo.png")]
@@ -292,46 +296,56 @@ def generate_pdf_quote(quote: LeaseQuote, plan_type: str, months: int) -> io.Byt
 
     if plan_type == 'classic':
         data_summary.append([
-            Paragraph("Δικαίωμα Εξαγοράς στη Λήξη (Buyout)", bold_style),
-            Paragraph(f"<b>{quote.buyout_final_payable:,.2f} €</b> <i>(Περιλαμβάνει -12% έκπτωση & Bonus 2x Εγγύησης)</i>", normal_style)
+            Paragraph("Δικαίωμα Εξαγοράς (Λήξη)", bold_style),
+            Paragraph(f"<b>{quote.buyout_final_payable:,.2f} €</b> <i>(Με -12% έκπτωση & Bonus 2x Εγγύησης)</i>", normal_style)
         ])
 
-    table = Table(data_summary, colWidths=[190, 345])
+    table = Table(data_summary, colWidths=[180, 355])
     table.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#EAEDED")),
         ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor("#F8F9F9")),
         ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#BDC3C7")),
-        ('TOPPADDING', (0, 0), (-1, -1), 3.5),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 3.5),
+        ('TOPPADDING', (0, 0), (-1, -1), 3),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
     ]))
     story.append(table)
-    story.append(Spacer(1, 6))
+    story.append(Spacer(1, 4))
 
     # Πρόσθετες Επιλογές (Add-ons)
     if quote.selected_addons:
         story.append(Paragraph("Επιλεγμένες Πρόσθετες Καλύψεις (Add-ons):", h2_style))
         for addon in quote.selected_addons:
             story.append(Paragraph(f"• {addon}", normal_style))
-        story.append(Spacer(1, 4))
+        story.append(Spacer(1, 2))
 
-    # Παροχές
-    story.append(Paragraph("Βασικές Παροχές που Συμπεριλαμβάνονται στο Μίσθωμα:", h2_style))
-    story.append(Paragraph("✔ Πλήρης Μηχανική Συντήρηση & Τακτικά Service | ✔ Μικτή Ασφάλεια με Αστική Ευθύνη & Κλοπή/Πυρκαγιά | ✔ Τέλη Κυκλοφορίας | ✔ 24/7 Οδική Βοήθεια Πανελλαδικά | ✔ Όχημα Αντικατάστασης σε περίπτωση βλάβης.", normal_style))
+    story.append(Paragraph("Βασικές Παροχές (Συμπεριλαμβάνονται):", h2_style))
+    story.append(Paragraph("✔ Πλήρες Service | ✔ Μικτή Ασφάλεια | ✔ Τέλη Κυκλοφορίας | ✔ 24/7 Οδική | ✔ Όχημα Αντικατάστασης.", normal_style))
     story.append(Spacer(1, 6))
 
-    story.append(HRFlowable(width="100%", thickness=0.5, color=colors.HexColor("#BDC3C7"), spaceBefore=2, spaceAfter=4))
+    # Οπτικός διαχωριστής
+    line_table = Table([['']], colWidths=[535])
+    line_table.setStyle(TableStyle([('LINEABOVE', (0,0), (-1,-1), 0.5, colors.HexColor("#BDC3C7"))]))
+    story.append(line_table)
+    story.append(Spacer(1, 4))
 
-    # Νομικοί Όροι & Πολιτική (Fine Print / Μικρά Γράμματα)
-    story.append(Paragraph("ΓΕΝΙΚΟΙ ΟΡΟΙ, ΠΡΟΫΠΟΘΕΣΕΙΣ & ΕΜΠΟΡΙΚΗ ΠΟΛΙΤΙΚΗ ΜΙΣΘΩΣΕΩΝ BEEPIT", h2_style))
-    fine_text = (
-        "<b>1. Οικονομικοί Όροι & Πληρωμές:</b> Τα μισθώματα προκαταβάλλονται στην αρχή κάθε μισθωτικής περιόδου. Στο πρόγραμμα Classic, η εγγύηση (2 μισθώματα) επιστρέφεται άτοκα στη λήξη εφόσον το όχημα παραδοθεί σε καλή κατάσταση, ή συμψηφίζεται διπλασιασμένη σε περίπτωση άσκησης του δικαιώματος εξαγοράς. Στο πρόγραμμα Flex δεν απαιτείται εγγύηση ούτε τέλος εγγραφής.<br/>"
-        "<b>2. Δικαίωμα Εξαγοράς (Lease-to-Own):</b> Ισχύει αποκλειστικά για το πρόγραμμα Classic. Ο μισθωτής δικαιούται να αποκτήσει την κυριότητα του οχήματος στη λήξη καταβάλλοντας το τελικό ποσό εξαγοράς, το οποίο υπολογίζεται βάσει της υπολειμματικής αξίας μείον 12% εμπορική έκπτωση και μείον το διπλάσιο της καταβληθείσας εγγύησης (Bonus 100%).<br/>"
-        "<b>3. Όρια Χιλιομέτρων & Υπέρβαση:</b> Η προσφορά ισχύει για το αναγραφόμενο ετήσιο όριο χιλιομέτρων. Σε περίπτωση υπέρβασης κατά την τελική εκκαθάριση, ισχύει χρέωση 0,10 € / επιπλέον χιλιόμετρο (πλέον ΦΠΑ 24%).<br/>"
-        "<b>4. Ασφάλιση & Απαλλαγή Ευθύνης:</b> Το όχημα καλύπτεται από μικτή ασφάλιση με βασικό ποσό απαλλαγής. Σε περίπτωση επιλογής της κάλυψης 'Zero Deductible', η απαλλαγή μηδενίζεται (εξαιρούνται παραβάσεις ΚΟΚ, οδήγηση υπό την επήρεια ουσιών ή χρήση εκτός ασφαλτοστρωμένου οδοστρώματος).<br/>"
-        "<b>5. Πρόωρη Λύση Σύμβασης:</b> Στο πρόγραμμα Flex η μίσθωση διακόπτεται ελεύθερα με ειδοποίηση 5 εργάσιμων ημερών προ της έναρξης του επόμενου μήνα. Στο πρόγραμμα Classic, σε περίπτωση πρόωρης καταγγελίας εκ μέρους του μισθωτή, παρακρατείται η εγγύηση και επιβάλλεται αποζημίωση ίση με το 50% των υπολειπόμενων μισθωμάτων.<br/>"
-        "<b>6. Εγκυρότητα Προσφοράς:</b> Η παρούσα προσφορά ισχύει για 15 ημέρες από την έκδοσή της και τελεί υπό την προϋπόθεση οικονομικής έγκρισης και διαθεσιμότητας του οχήματος."
-    )
-    story.append(Paragraph(fine_text, fine_print))
+    # --- ΝΟΜΙΚΟΙ ΟΡΟΙ & ΠΟΛΙΤΙΚΗ (FINE PRINT) ---
+    story.append(Paragraph("ΓΕΝΙΚΟΙ ΟΡΟΙ, ΠΡΟΫΠΟΘΕΣΕΙΣ ΚΑΙ ΕΜΠΟΡΙΚΗ ΠΟΛΙΤΙΚΗ ΜΙΣΘΩΣΕΩΝ BEEPIT", fine_print_title))
+    
+    terms = [
+        "<b>1. Κυριότητα & Οδηγοί:</b> Το όχημα ανήκει στην beepit. Απαγορεύεται αυστηρά η παραχώρηση σε μη εξουσιοδοτημένους οδηγούς. Απαιτείται ηλικία 21 ετών (ή 25 για SUV/Premium).",
+        "<b>2. Οικονομικοί Όροι & Καθυστερήσεις:</b> Τα μισθώματα προκαταβάλλονται. Καθυστέρηση άνω των 5 ημερών επιφέρει penalty 15€+ΦΠΑ και δικαίωμα ακινητοποίησης του οχήματος μέσω Τηλεματικής/GPS.",
+        "<b>3. Classic Leasing (Δεσμεύσεις & Εξαγορά):</b> Η πρόωρη λύση επιφέρει ποινική ρήτρα 50% των υπολειπόμενων μισθωμάτων και παρακράτηση εγγύησης. Το αποκλειστικό δικαίωμα εξαγοράς (Lease-to-Own) στη λήξη υπολογίζεται βάσει του RV, μειωμένο κατά 12% και αφαιρουμένου του διπλάσιου της εγγύησης.",
+        "<b>4. Flex Leasing (Ευελιξία):</b> Ελάχιστη μίσθωση 30 ημέρες, χωρίς προκαταβολή ή εγγύηση (0€ fee). Δικαίωμα διακοπής με ειδοποίηση 5 εργάσιμων ημερών. Για ενάρξεις Ιουνίου-Σεπτεμβρίου εφαρμόζεται εποχικότητα +25%.",
+        "<b>5. Συντήρηση & Ευθύνες Μισθωτή:</b> Η beepit καλύπτει το προγραμματισμένο service. Ο πελάτης υποχρεούται να ελέγχει λάδια/νερά. Ζημιές κινητήρα από αμέλεια ελέγχου βαρύνουν 100% τον Μισθωτή. Φθορά ελαστικών καλύπτεται μόνο μέσω Add-on.",
+        "<b>6. Μικτή Ασφάλιση & Εξαιρέσεις (Ακύρωση Κάλυψης):</b> Η μικτή ασφάλεια (CDW/FDW) ΔΕΝ ισχύει σε παραβίαση ερυθρού σηματοδότη, STOP, μέθη, off-road οδήγηση, ή για ζημιές στο κάτω μέρος (κάρτερ) και στις ζάντες.",
+        "<b>7. Περιορισμοί & Κ.Ο.Κ.:</b> Απαγορεύεται η φόρτωση σε πλοίο και η έξοδος στο εξωτερικό χωρίς έγγραφη άδεια. Κάθε κλήση Κ.Ο.Κ. βαρύνει τον Μισθωτή, με επιπλέον διαχειριστικό κόστος beepit 20€+ΦΠΑ ανά κλήση.",
+        "<b>8. Φθορές Επιστροφής (Fair Wear & Tear):</b> Το όχημα ελέγχεται στην επιστροφή. Κάψιμο/σκίσιμο καθισμάτων, βαθιά γδαρσίματα και ελλιπής εξοπλισμός χρεώνονται άμεσα στον πελάτη.",
+        "<b>9. GDPR & Τηλεματική:</b> Ο Μισθωτής συναινεί στην εγκατάσταση συστήματος παρακολούθησης GPS από την beepit, για λόγους ασφάλειας περιουσίας και συντήρησης, αποδεχόμενος την επεξεργασία αυτών των δεδομένων."
+    ]
+
+    for term in terms:
+        story.append(Paragraph(term, fine_print))
+        story.append(Spacer(1, 1))
 
     doc.build(story)
     buffer.seek(0)
