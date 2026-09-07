@@ -63,11 +63,12 @@ def run_health_server():
     PLAN_STEP,
     DP_STEP,
     DURATION_STEP,
+    BUYOUT_OPTION_STEP,
     START_MONTH_STEP,
     KM_STEP,
     ADDONS_STEP,
     INTEREST_RATE_STEP,
-) = range(12)
+) = range(13)
 
 @dataclass
 class LeaseQuote:
@@ -82,6 +83,7 @@ class LeaseQuote:
     addons_cost: float
     selected_addons: list
     annual_km: int
+    wants_buyout: bool
 
 @dataclass
 class LoanQuote:
@@ -148,7 +150,8 @@ def calculate_leasing(
     annual_km: int,
     fuel_type: str,
     start_month: int,
-    selected_addons: list
+    selected_addons: list,
+    wants_buyout: bool
 ) -> LeaseQuote:
     vat_rate = 0.24
     margin_rate = 0.11 if car_value > 25000 else 0.10
@@ -213,8 +216,8 @@ def calculate_leasing(
     monthly_rate_excl_vat += addons_excl_vat
     monthly_rate_incl_vat = monthly_rate_excl_vat * (1 + vat_rate)
 
-    if plan_type.lower() == 'flex':
-        upfront_guarantee = 0.0
+    if plan_type.lower() == 'flex' or not wants_buyout:
+        upfront_guarantee = 0.0 if plan_type.lower() == 'flex' else monthly_rate_incl_vat * 2
         buyout_nominal_incl_vat = 0.0
         buyout_final_payable = 0.0
     else:
@@ -237,7 +240,8 @@ def calculate_leasing(
         buyout_final_payable=round(buyout_final_payable, 2),
         addons_cost=addons_monthly_total,
         selected_addons=selected_addons,
-        annual_km=annual_km
+        annual_km=annual_km,
+        wants_buyout=wants_buyout
     )
 
 def generate_pdf_loan(quote: LoanQuote) -> io.BytesIO:
@@ -371,7 +375,7 @@ def generate_pdf_quote(quote: LeaseQuote, plan_type: str, months: int) -> io.Byt
         [Paragraph("ΣΥΝΟΛΙΚΟ ΑΡΧΙΚΟ ΠΟΣΟ ΠΛΗΡΩΜΗΣ", bold_style), Paragraph(f"{quote.upfront_total_payable:,.2f} €", bold_style)],
     ]
 
-    if plan_type == 'classic':
+    if plan_type == 'classic' and quote.wants_buyout:
         data_summary.append([
             Paragraph("Δικαίωμα Εξαγοράς (Λήξη)", bold_style),
             Paragraph(f"{quote.buyout_final_payable:,.2f} € (Με -12% έκπτωση & Bonus 2x Εγγύησης)", normal_style)
@@ -406,15 +410,15 @@ def generate_pdf_quote(quote: LeaseQuote, plan_type: str, months: int) -> io.Byt
     story.append(Paragraph("ΓΕΝΙΚΟΙ ΟΡΟΙ, ΠΡΟΫΠΟΘΕΣΕΙΣ ΚΑΙ ΕΜΠΟΡΙΚΗ ΠΟΛΙΤΙΚΗ ΜΙΣΘΩΣΕΩΝ BEEPIT", fine_print_title))
     
     terms = [
-        "1. Κυριότητα & Οδηγοί: Το όχημα παραμένει στην αποκλειστική κυριότητα της beepit[cite: 7]. Απαγορεύεται αυστηρά η παραχώρηση σε μη εξουσιοδοτημένους οδηγούς[cite: 7]. Απαιτείται ηλικία 21 ετών (ή 25 για SUV/Premium)[cite: 7].",
-        "2. Οικονομικοί Όροι & Καθυστερήσεις: Τα μισθώματα προκαταβάλλονται[cite: 7]. Καθυστέρηση άνω των 5 ημερών επιφέρει penalty 15€+ΦΠΑ και δικαίωμα ακινητοποίησης του οχήματος μέσω Τηλεματικής/GPS[cite: 7].",
-        "3. Classic Leasing (Δεσμεύσεις & Εξαγορά): Η πρόωρη λύση επιφέρει ποινική ρήτρα 50% των υπολειπόμενων μισθωμάτων και παρακράτηση εγγύησης[cite: 7]. Το αποκλειστικό δικαίωμα εξαγοράς στη λήξη υπολογίζεται βάσει RV μείον 12% έκπτωση και μείον το διπλάσιο της εγγύησης[cite: 7].",
-        "4. Flex Leasing (Ευελιξία): Ελάχιστη μίσθωση 30 ημέρες, χωρίς προκαταβολή ή εγγύηση (0€ fee)[cite: 7]. Δικαίωμα διακοπής με ειδοποίηση 5 εργάσιμων ημερών[cite: 7]. Για ενάρξεις Ιουνίου-Σεπτεμβρίου ισχύει εποχικότητα +25%[cite: 7].",
-        "5. Συντήρηση & Ευθύνες Μισθωτή: Η beepit καλύπτει το προγραμματισμένο service[cite: 7]. Ο μισθωτής ελέγχει στάθμη υγρών/λαδιών[cite: 7]. Ζημιές κινητήρα από αμέλεια βαρύνουν τον μισθωτή[cite: 7]. Φθορά ελαστικών καλύπτεται μόνο μέσω Add-on[cite: 7].",
-        "6. Μικτή Ασφάλιση & Εξαιρέσεις: Η μικτή ασφάλεια (CDW/FDW) ΔΕΝ ισχύει σε παραβίαση STOP, φαναριού, μέθη, off-road οδήγηση, ή για ζημιές στο κάτω μέρος (κάρτερ) και στις ζάντες[cite: 7].",
-        "7. Περιορισμοί & Κ.Ο.Κ.: Απαγορεύεται η φόρτωση σε πλοίο και η έξοδος στο εξωτερικό χωρίς έγγραφη άδεια[cite: 7]. Κλήσεις Κ.Ο.Κ. βαρύνουν τον Μισθωτή με διαχειριστικό κόστος beepit 20€+ΦΠΑ ανά κλήση[cite: 7].",
-        "8. Φθορές Επιστροφής (Fair Wear & Tear): Το όχημα ελέγχεται στην επιστροφή[cite: 7]. Κάψιμο/σκίσιμο καθισμάτων, βαθιά γδαρσίματα και ελλιπής εξοπλισμός χρεώνονται στον μισθωτή[cite: 7].",
-        "9. GDPR & Τηλεματική: Ο Μισθωτής συναινεί στη συλλογή δεδομένων τηλεματικής GPS από την beepit για λόγους ασφαλείας και προστασίας περιουσίας[cite: 7]."
+        "1. Κυριότητα & Οδηγοί: Το όχημα παραμένει στην αποκλειστική κυριότητα της beepit. Απαγορεύεται αυστηρά η παραχώρηση σε μη εξουσιοδοτημένους οδηγούς. Απαιτείται ηλικία 21 ετών (ή 25 για SUV/Premium).",
+        "2. Οικονομικοί Όροι & Καθυστερήσεις: Τα μισθώματα προκαταβάλλονται. Καθυστέρηση άνω των 5 ημερών επιφέρει penalty 15€+ΦΠΑ και δικαίωμα ακινητοποίησης του οχήματος μέσω Τηλεματικής/GPS.",
+        "3. Classic Leasing (Δεσμεύσεις & Εξαγορά): Η πρόωρη λύση επιφέρει ποινική ρήτρα 50% των υπολειπόμενων μισθωμάτων και παρακράτηση εγγύησης. Εφόσον συμφωνηθεί δικαίωμα εξαγοράς (Lease-to-Own), υπολογίζεται βάσει RV μείον 12% έκπτωση και μείον το διπλάσιο της εγγύησης.",
+        "4. Flex Leasing (Ευελιξία): Ελάχιστη μίσθωση 30 ημέρες, χωρίς προκαταβολή ή εγγύηση (0€ fee). Δικαίωμα διακοπής με ειδοποίηση 5 εργάσιμων ημερών. Για ενάρξεις Ιουνίου-Σεπτεμβρίου ισχύει εποχικότητα +25%.",
+        "5. Συντήρηση & Ευθύνες Μισθωτή: Η beepit καλύπτει το προγραμματισμένο service. Ο μισθωτής ελέγχει στάθμη υγρών/λαδιών. Ζημιές κινητήρα από αμέλεια βαρύνουν τον μισθωτή. Φθορά ελαστικών καλύπτεται μόνο μέσω Add-on.",
+        "6. Μικτή Ασφάλιση & Εξαιρέσεις: Η μικτή ασφάλεια (CDW/FDW) ΔΕΝ ισχύει σε παραβίαση STOP, φαναριού, μέθη, off-road οδήγηση, ή για ζημιές στο κάτω μέρος (κάρτερ) και στις ζάντες.",
+        "7. Περιορισμοί & Κ.Ο.Κ.: Απαγορεύεται η φόρτωση σε πλοίο και η έξοδος στο εξωτερικό χωρίς έγγραφη άδεια. Κλήσεις Κ.Ο.Κ. βαρύνουν τον Μισθωτή με διαχειριστικό κόστος beepit 20€+ΦΠΑ ανά κλήση.",
+        "8. Φθορές Επιστροφής (Fair Wear & Tear): Το όχημα ελέγχεται στην επιστροφή. Κάψιμο/σκίσιμο καθισμάτων, βαθιά γδαρσίματα και ελλιπής εξοπλισμός χρεώνονται στον μισθωτή.",
+        "9. GDPR & Τηλεματική: Ο Μισθωτής συναινεί στη συλλογή δεδομένων τηλεματικής GPS από την beepit για λόγους ασφαλείας και προστασίας περιουσίας."
     ]
 
     for term in terms:
@@ -512,6 +516,7 @@ async def get_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['plan'] = "flex"
         context.user_data['downpayment_pct'] = 0.0
         context.user_data['months'] = 12
+        context.user_data['wants_buyout'] = False
         reply_keyboard = [
             ["1 (Ιαν)", "2 (Φεβ)", "3 (Μαρ)", "4 (Απρ)"],
             ["5 (Μαι)", "6 (Ιουν)", "7 (Ιουλ)", "8 (Αυγ)"],
@@ -528,6 +533,27 @@ async def get_duration(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     context.user_data['months'] = int(text.split()[0])
     
+    if context.user_data.get('plan') == 'classic':
+        reply_keyboard = [["Ναι", "Όχι"]]
+        await update.message.reply_text(
+            "🔑 Επιθυμείτε **δικαίωμα εξαγοράς (Lease-to-Own)** του οχήματος στη λήξη της μίσθωσης;",
+            reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True),
+            parse_mode="Markdown"
+        )
+        return BUYOUT_OPTION_STEP
+
+    reply_keyboard = [["0%", "10%", "20%", "30%", "40%", "50%"]]
+    await update.message.reply_text(
+        "Επίλεξε **ποσοστό προκαταβολής**:",
+        reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True),
+        parse_mode="Markdown"
+    )
+    return DP_STEP
+
+async def get_buyout_option(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    ans = update.message.text.strip().lower()
+    context.user_data['wants_buyout'] = True if "ναι" in ans or "yes" in ans else False
+
     reply_keyboard = [["0%", "10%", "20%", "30%", "40%", "50%"]]
     await update.message.reply_text(
         "Επίλεξε **ποσοστό προκαταβολής**:",
@@ -646,6 +672,8 @@ async def get_addons_and_finish(update: Update, context: ContextTypes.DEFAULT_TY
         selected_addons.extend(["Zero Deductible (+25 EUR)", "2nd Driver & Tire Replacement (+15 EUR)"])
 
     data = context.user_data
+    wants_buyout = data.get('wants_buyout', False)
+
     quote = calculate_leasing(
         car_name=data.get('car_name', 'Όχημα Leasing'),
         car_value=data['price'],
@@ -657,12 +685,13 @@ async def get_addons_and_finish(update: Update, context: ContextTypes.DEFAULT_TY
         annual_km=data['annual_km'],
         fuel_type=data['fuel'],
         start_month=data.get('start_month', 1),
-        selected_addons=selected_addons
+        selected_addons=selected_addons,
+        wants_buyout=wants_buyout
     )
 
     dp_line = f"• Προκαταβολή ({int(data.get('downpayment_pct', 0))}%): *{quote.upfront_downpayment:,.2f} €*\n" if quote.upfront_downpayment > 0 else ""
     buyout_section = ""
-    if data['plan'] == 'classic':
+    if data['plan'] == 'classic' and quote.wants_buyout:
         buyout_section = (
             "━━━━━━━━━━━━━━━━━━━━\n"
             "🔑 **ΔΙΚΑΙΩΜΑ ΕΞΑΓΟΡΑΣ (ΣΤΗ ΛΗΞΗ)**\n"
@@ -715,8 +744,9 @@ if __name__ == "__main__":
             CUSTOM_ODOMETER: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_custom_odometer)],
             CUSTOM_FUEL: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_custom_fuel)],
             PLAN_STEP: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_plan)],
-            DP_STEP: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_dp)],
             DURATION_STEP: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_duration)],
+            BUYOUT_OPTION_STEP: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_buyout_option)],
+            DP_STEP: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_dp)],
             START_MONTH_STEP: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_start_month)],
             KM_STEP: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_km)],
             ADDONS_STEP: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_addons_and_finish)],
@@ -726,5 +756,5 @@ if __name__ == "__main__":
     )
 
     app.add_handler(conv_handler)
-    print("🚀 Το Bot είναι ONLINE με ευέλικτη αναγνώριση προκαταβολής & δάνειο!")
+    print("🚀 Το Bot είναι ONLINE με επιλογή Εξαγοράς (Ναι/Όχι) & Δάνειο!")
     app.run_polling()
