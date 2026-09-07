@@ -27,6 +27,7 @@ from reportlab.pdfbase.ttfonts import TTFont
 TELEGRAM_TOKEN = "8902761856:AAEmSuEs96Bxm2XA-H3vBiyrPU0wNqhPB9g"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
+# --- ΕΛΛΗΝΙΚΗ ΓΡΑΜΜΑΤΟΣΕΙΡΑ ---
 FONT_REGULAR = "Helvetica"
 FONT_BOLD = "Helvetica-Bold"
 
@@ -39,6 +40,7 @@ if os.path.exists(custom_font_path):
     except Exception as e:
         print(f"Font loading error: {e}")
 
+# --- HEALTH CHECK SERVER ΓΙΑ RENDER ---
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -54,6 +56,7 @@ def run_health_server():
     server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
     server.serve_forever()
 
+# ΒΗΜΑΤΑ ΣΥΝΟΜΙΛΙΑΣ
 (
     VEHICLE_NAME,
     CUSTOM_PRICE,
@@ -61,9 +64,9 @@ def run_health_server():
     CUSTOM_ODOMETER,
     CUSTOM_FUEL,
     PLAN_STEP,
-    DP_STEP,
     DURATION_STEP,
     BUYOUT_OPTION_STEP,
+    DP_STEP,
     START_MONTH_STEP,
     KM_STEP,
     ADDONS_STEP,
@@ -410,15 +413,15 @@ def generate_pdf_quote(quote: LeaseQuote, plan_type: str, months: int) -> io.Byt
     story.append(Paragraph("ΓΕΝΙΚΟΙ ΟΡΟΙ, ΠΡΟΫΠΟΘΕΣΕΙΣ ΚΑΙ ΕΜΠΟΡΙΚΗ ΠΟΛΙΤΙΚΗ ΜΙΣΘΩΣΕΩΝ BEEPIT", fine_print_title))
     
     terms = [
-        "1. Κυριότητα & Οδηγοί: Το όχημα παραμένει στην αποκλειστική κυριότητα της beepit. Απαγορεύεται αυστηρά η παραχώρηση σε μη εξουσιοδοτημένους οδηγούς. Απαιτείται ηλικία 21 ετών (ή 25 για SUV/Premium).",
-        "2. Οικονομικοί Όροι & Καθυστερήσεις: Τα μισθώματα προκαταβάλλονται. Καθυστέρηση άνω των 5 ημερών επιφέρει penalty 15€+ΦΠΑ και δικαίωμα ακινητοποίησης του οχήματος μέσω Τηλεματικής/GPS.",
-        "3. Classic Leasing (Δεσμεύσεις & Εξαγορά): Η πρόωρη λύση επιφέρει ποινική ρήτρα 50% των υπολειπόμενων μισθωμάτων και παρακράτηση εγγύησης. Εφόσον συμφωνηθεί δικαίωμα εξαγοράς (Lease-to-Own), υπολογίζεται βάσει RV μείον 12% έκπτωση και μείον το διπλάσιο της εγγύησης.",
-        "4. Flex Leasing (Ευελιξία): Ελάχιστη μίσθωση 30 ημέρες, χωρίς προκαταβολή ή εγγύηση (0€ fee). Δικαίωμα διακοπής με ειδοποίηση 5 εργάσιμων ημερών. Για ενάρξεις Ιουνίου-Σεπτεμβρίου ισχύει εποχικότητα +25%.",
-        "5. Συντήρηση & Ευθύνες Μισθωτή: Η beepit καλύπτει το προγραμματισμένο service. Ο μισθωτής ελέγχει στάθμη υγρών/λαδιών. Ζημιές κινητήρα από αμέλεια βαρύνουν τον μισθωτή. Φθορά ελαστικών καλύπτεται μόνο μέσω Add-on.",
-        "6. Μικτή Ασφάλιση & Εξαιρέσεις: Η μικτή ασφάλεια (CDW/FDW) ΔΕΝ ισχύει σε παραβίαση STOP, φαναριού, μέθη, off-road οδήγηση, ή για ζημιές στο κάτω μέρος (κάρτερ) και στις ζάντες.",
-        "7. Περιορισμοί & Κ.Ο.Κ.: Απαγορεύεται η φόρτωση σε πλοίο και η έξοδος στο εξωτερικό χωρίς έγγραφη άδεια. Κλήσεις Κ.Ο.Κ. βαρύνουν τον Μισθωτή με διαχειριστικό κόστος beepit 20€+ΦΠΑ ανά κλήση.",
-        "8. Φθορές Επιστροφής (Fair Wear & Tear): Το όχημα ελέγχεται στην επιστροφή. Κάψιμο/σκίσιμο καθισμάτων, βαθιά γδαρσίματα και ελλιπής εξοπλισμός χρεώνονται στον μισθωτή.",
-        "9. GDPR & Τηλεματική: Ο Μισθωτής συναινεί στη συλλογή δεδομένων τηλεματικής GPS από την beepit για λόγους ασφαλείας και προστασίας περιουσίας."
+        "1. Κυριότητα & Οδηγοί: Το όχημα παραμένει στην αποκλειστική κυριότητα της beepit[cite: 7]. Απαγορεύεται αυστηρά η παραχώρηση σε μη εξουσιοδοτημένους οδηγούς[cite: 7]. Απαιτείται ηλικία 21 ετών (ή 25 για SUV/Premium)[cite: 7].",
+        "2. Οικονομικοί Όροι & Καθυστερήσεις: Τα μισθώματα προκαταβάλλονται[cite: 7]. Καθυστέρηση άνω των 5 ημερών επιφέρει penalty 15€+ΦΠΑ και δικαίωμα ακινητοποίησης του οχήματος μέσω Τηλεματικής/GPS[cite: 7].",
+        "3. Classic Leasing (Δεσμεύσεις & Εξαγορά): Η πρόωρη λύση επιφέρει ποινική ρήτρα 50% των υπολειπόμενων μισθωμάτων και παρακράτηση εγγύησης[cite: 7]. Εφόσον συμφωνηθεί δικαίωμα εξαγοράς (Lease-to-Own), υπολογίζεται βάσει RV μείον 12% έκπτωση και μείον το διπλάσιο της εγγύησης[cite: 7].",
+        "4. Flex Leasing (Ευελιξία): Ελάχιστη μίσθωση 30 ημέρες, χωρίς προκαταβολή ή εγγύηση (0€ fee)[cite: 7]. Δικαίωμα διακοπής με ειδοποίηση 5 εργάσιμων ημερών[cite: 7]. Για ενάρξεις Ιουνίου-Σεπτεμβρίου ισχύει εποχικότητα +25%[cite: 7].",
+        "5. Συντήρηση & Ευθύνες Μισθωτή: Η beepit καλύπτει το προγραμματισμένο service[cite: 7]. Ο μισθωτής ελέγχει στάθμη υγρών/λαδιών[cite: 7]. Ζημιές κινητήρα από αμέλεια βαρύνουν τον μισθωτή[cite: 7]. Φθορά ελαστικών καλύπτεται μόνο μέσω Add-on[cite: 7].",
+        "6. Μικτή Ασφάλιση & Εξαιρέσεις: Η μικτή ασφάλεια (CDW/FDW) ΔΕΝ ισχύει σε παραβίαση STOP, φαναριού, μέθη, off-road οδήγηση, ή για ζημιές στο κάτω μέρος (κάρτερ) και στις ζάντες[cite: 7].",
+        "7. Περιορισμοί & Κ.Ο.Κ.: Απαγορεύεται η φόρτωση σε πλοίο και η έξοδος στο εξωτερικό χωρίς έγγραφη άδεια[cite: 7]. Κλήσεις Κ.Ο.Κ. βαρύνουν τον Μισθωτή με διαχειριστικό κόστος beepit 20€+ΦΠΑ ανά κλήση[cite: 7].",
+        "8. Φθορές Επιστροφής (Fair Wear & Tear): Το όχημα ελέγχεται στην επιστροφή[cite: 7]. Κάψιμο/σκίσιμο καθισμάτων, βαθιά γδαρσίματα και ελλιπής εξοπλισμός χρεώνονται στον μισθωτή[cite: 7].",
+        "9. GDPR & Τηλεματική: Ο Μισθωτής συναινεί στη συλλογή δεδομένων τηλεματικής GPS από την beepit για λόγους ασφαλείας και προστασίας περιουσίας[cite: 7]."
     ]
 
     for term in terms:
@@ -494,7 +497,7 @@ async def get_custom_fuel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def get_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     plan_text = update.message.text.strip().lower()
     
-    if "δάνειο" in plan_text or "daneio" in plan_text or "loan" in plan_text:
+    if "δαν" in plan_text or "loan" in plan_text:
         context.user_data['plan'] = "loan"
         reply_keyboard = [["24 μήνες", "36 μήνες", "48 μήνες", "60 μήνες", "72 μήνες", "84 μήνες"]]
         await update.message.reply_text(
@@ -531,28 +534,32 @@ async def get_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def get_duration(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
-    context.user_data['months'] = int(text.split()[0])
+    try:
+        context.user_data['months'] = int(text.split()[0])
+    except Exception:
+        context.user_data['months'] = 48
     
     if context.user_data.get('plan') == 'classic':
         reply_keyboard = [["Ναι", "Όχι"]]
         await update.message.reply_text(
-            "🔑 Επιθυμείτε **δικαίωμα εξαγοράς (Lease-to-Own)** του οχήματος στη λήξη της μίσθωσης;",
+            "🔑 Επιθυμείτε **δικαίωμα εξαγοράς (Lease-to-Own)** του οχήματος στη λήξη;",
             reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True),
             parse_mode="Markdown"
         )
         return BUYOUT_OPTION_STEP
-
-    reply_keyboard = [["0%", "10%", "20%", "30%", "40%", "50%"]]
-    await update.message.reply_text(
-        "Επίλεξε **ποσοστό προκαταβολής**:",
-        reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True),
-        parse_mode="Markdown"
-    )
-    return DP_STEP
+    else:
+        # Για Δάνειο
+        reply_keyboard = [["0%", "10%", "20%", "30%", "40%", "50%"]]
+        await update.message.reply_text(
+            "Επίλεξε **ποσοστό προκαταβολής**:",
+            reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True),
+            parse_mode="Markdown"
+        )
+        return DP_STEP
 
 async def get_buyout_option(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ans = update.message.text.strip().lower()
-    context.user_data['wants_buyout'] = True if "ναι" in ans or "yes" in ans else False
+    context.user_data['wants_buyout'] = True if ("ναι" in ans or "yes" in ans) else False
 
     reply_keyboard = [["0%", "10%", "20%", "30%", "40%", "50%"]]
     await update.message.reply_text(
@@ -632,7 +639,11 @@ async def get_interest_rate_and_finish(update: Update, context: ContextTypes.DEF
     return ConversationHandler.END
 
 async def get_start_month(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['start_month'] = int(update.message.text.strip().split()[0])
+    try:
+        context.user_data['start_month'] = int(update.message.text.strip().split()[0])
+    except Exception:
+        context.user_data['start_month'] = 1
+
     reply_keyboard = [["1000 χλμ/μήνα", "2000 χλμ/μήνα", "3000 χλμ/μήνα"]]
     await update.message.reply_text(
         "Επίλεξε **μηνιαία χιλιόμετρα χρήσης**:",
@@ -642,7 +653,11 @@ async def get_start_month(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return KM_STEP
 
 async def get_km(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    km_val = int(update.message.text.strip().split()[0])
+    try:
+        km_val = int(update.message.text.strip().split()[0])
+    except Exception:
+        km_val = 20000
+
     if context.user_data['plan'] == 'flex':
         context.user_data['annual_km'] = km_val * 12
     else:
@@ -756,5 +771,5 @@ if __name__ == "__main__":
     )
 
     app.add_handler(conv_handler)
-    print("🚀 Το Bot είναι ONLINE με επιλογή Εξαγοράς (Ναι/Όχι) & Δάνειο!")
+    print("🚀 Το Bot είναι ONLINE - Πλήρης ροή Leasing, Flex και Δανείου!")
     app.run_polling()
