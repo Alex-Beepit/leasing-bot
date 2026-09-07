@@ -27,7 +27,6 @@ from reportlab.pdfbase.ttfonts import TTFont
 TELEGRAM_TOKEN = "8902761856:AAEmSuEs96Bxm2XA-H3vBiyrPU0wNqhPB9g"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# --- ΕΝΣΩΜΑΤΩΣΗ ΕΛΛΗΝΙΚΗΣ ΓΡΑΜΜΑΤΟΣΕΙΡΑΣ ---
 FONT_REGULAR = "Helvetica"
 FONT_BOLD = "Helvetica-Bold"
 
@@ -40,7 +39,6 @@ if os.path.exists(custom_font_path):
     except Exception as e:
         print(f"Font loading error: {e}")
 
-# --- DUMMY HTTP SERVER ΓΙΑ RENDER HEALTH CHECK ---
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -56,7 +54,6 @@ def run_health_server():
     server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
     server.serve_forever()
 
-# Καταστάσεις διαλόγου
 (
     VEHICLE_NAME,
     CUSTOM_PRICE,
@@ -428,8 +425,6 @@ def generate_pdf_quote(quote: LeaseQuote, plan_type: str, months: int) -> io.Byt
     buffer.seek(0)
     return buffer
 
-# --- TELEGRAM HANDLERS ---
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     await update.message.reply_text(
@@ -542,9 +537,9 @@ async def get_duration(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return DP_STEP
 
 async def get_dp(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip().replace('%', '')
+    raw_text = update.message.text.strip().replace('%', '').replace(',', '.')
     try:
-        pct = float(text)
+        pct = float(raw_text)
         context.user_data['downpayment_pct'] = pct
     except ValueError:
         context.user_data['downpayment_pct'] = 0.0
@@ -731,5 +726,5 @@ if __name__ == "__main__":
     )
 
     app.add_handler(conv_handler)
-    print("🚀 Το Bot είναι ONLINE με Υπολογισμό Leasing, Flex και Δανείου (με Επιτόκιο & PDF)!")
+    print("🚀 Το Bot είναι ONLINE με ευέλικτη αναγνώριση προκαταβολής & δάνειο!")
     app.run_polling()
